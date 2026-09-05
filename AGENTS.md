@@ -7,14 +7,20 @@ deepseek-tui is an opencode-like interactive terminal UI that boots *inside* a D
 - This package is a **profile bundle**: `package.json` declares `"dsh": { "bundle": { "patch": "./cordis.patch.yml" } }`; `cordis.patch.yml` inserts the app plugin into the profile tree on top of `@deepseek-ai/dsh-base`. A profile (`~/.dsh/profiles/<name>`) lists `@deepseek-ai/dsh-base` and this package in `dsh.profile.bundles` and resolves it from its own `node_modules` (`file:` dependency during development, registry/git when released).
 - The plugin runs in the same process as the harness and drives it through the ctx services it declares in `inject` (`agents` today; add `sessionPersistence`, `commands`, `approval`, … as features land). It never spawns a child runtime and never reads `DEEPSEEK_API_KEY` — provider access is the harness's own.
 - Events arrive on the ctx event bus: `ctx.on('session/event', …)`, `ctx.on('agent/status', …)`, `ctx.on('approval/request', …)`. Render only what these events say — never guess agent state.
-- Service APIs are pre-stable. `src/index.tsx` carries small structural mirrors of the service surface with a `ponytail:` comment; replace them with devDependency types from the sibling harness checkout (`file:../deepseek-harness/packages/…`, built `lib/` carries `types`) once the renderer needs the real event types.
+- Service APIs are pre-stable. Types come from `file:` devDependencies on the sibling harness checkout (its built `lib/` carries `types`); `pnpm-workspace.yaml` rewrites those packages' internal `workspace:^` deps to the same checkout so `pnpm install` resolves outside the harness workspace. Keep every `@deepseek-ai/*` import type-only: the profile process resolves no harness modules at runtime, so a runtime value import breaks boot.
 - Every exit path must dispose the agent handle and unsubscribe `ctx.on` listeners; exiting the UI exits the profile process (`process.exit(0)`), so no orphaned runtime is possible.
 
 ## Repository layout
 
 ```
 cordis.patch.yml   bundle patch rows (plugin id/name) applied over the base layer
-src/index.tsx      the app plugin: name/inject/apply exports, Ink chat UI
+src/index.tsx      plugin entry: alt-screen setup/restore, Ink render, exit funnel
+src/app.tsx        app controller: session lifecycle, event subscriptions, key dispatch
+src/ui.tsx         dumb view components (header, transcript, footer, composer)
+src/theme.ts       typed color/border tokens; the only source of styling literals
+src/keys.ts        KEYBINDINGS table + matchKey; the single source for key handling
+src/scroll.ts      pure layout math (scroll window, composer/viewport sizing)
+src/shell.test.ts  vitest spec for the key table and layout math
 ```
 
 ## Commands
@@ -23,6 +29,7 @@ src/index.tsx      the app plugin: name/inject/apply exports, Ink chat UI
 pnpm install            # node >=22, pnpm; esbuild build approved via allowBuilds in pnpm-workspace.yaml
 pnpm typecheck          # tsc --noEmit
 pnpm build              # tsc emit to lib/ (lib/index.js + lib/index.d.ts)
+pnpm test               # vitest run (pure key/layout logic only)
 pnpm clean              # remove lib/ and *.tsbuildinfo
 ```
 
