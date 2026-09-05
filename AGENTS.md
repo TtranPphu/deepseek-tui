@@ -13,14 +13,16 @@ deepseek-tui is an opencode-like interactive terminal UI that boots *inside* a D
 ## Repository layout
 
 ```
-cordis.patch.yml   bundle patch rows (plugin id/name) applied over the base layer
-src/index.tsx      plugin entry: alt-screen setup/restore, Ink render, exit funnel
-src/app.tsx        app controller: session lifecycle, event subscriptions, key dispatch
-src/ui.tsx         dumb view components (header, transcript, footer, composer)
-src/theme.ts       typed color/border tokens; the only source of styling literals
-src/keys.ts        KEYBINDINGS table + matchKey; the single source for key handling
-src/scroll.ts      pure layout math (scroll window, composer/viewport sizing)
-src/shell.test.ts  vitest spec for the key table and layout math
+cordis.patch.yml      bundle patch rows (plugin id/name) applied over the base layer
+src/index.tsx         plugin entry: alt-screen setup/restore, Ink render, exit funnel
+src/app.tsx           app controller: session lifecycle, event subscriptions, key dispatch
+src/projection.ts     pure session-event/stream-frame → turn view model fold
+src/ui.tsx            dumb view components (header, transcript, footer, composer)
+src/theme.ts          typed color/border tokens; the only source of styling literals
+src/keys.ts           KEYBINDINGS table + matchKey; the single source for key handling
+src/scroll.ts         pure layout math (scroll window, composer/viewport sizing, wrap)
+src/projection.test.ts vitest spec for the event → view projection
+src/shell.test.ts     vitest spec for the key table and layout math
 ```
 
 ## Commands

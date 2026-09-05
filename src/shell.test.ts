@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Key } from 'ink'
 import { KEYBINDINGS, matchKey } from './keys.js'
-import { clampScroll, composerRows, scrollWindow, transcriptViewport } from './scroll.js'
+import { clampScroll, composerRows, scrollWindow, transcriptViewport, wrapText } from './scroll.js'
 
 function key(overrides: Partial<Key> = {}): Key {
   return {
@@ -26,6 +26,8 @@ function key(overrides: Partial<Key> = {}): Key {
 describe('matchKey', () => {
   it('maps every documented binding', () => {
     expect(matchKey('\r', key({ return: true }))).toBe('submit')
+    expect(matchKey('\n', key())).toBe('newline')
+    expect(matchKey('\r', key({ return: true, shift: true }))).toBe('newline')
     expect(matchKey('', key({ escape: true }))).toBe('interrupt')
     expect(matchKey('c', key({ ctrl: true }))).toBe('quit')
     expect(matchKey('', key({ upArrow: true }))).toBe('scroll-up')
@@ -44,7 +46,7 @@ describe('matchKey', () => {
 
   it('keeps one footer hint per documented group', () => {
     const hinted = KEYBINDINGS.filter((binding) => binding.hint).map((binding) => binding.action)
-    expect(hinted).toEqual(['submit', 'interrupt', 'quit', 'scroll-up', 'page-up'])
+    expect(hinted).toEqual(['newline', 'submit', 'interrupt', 'quit', 'scroll-up', 'page-up'])
   })
 })
 
@@ -64,11 +66,21 @@ describe('scroll math', () => {
   })
 
   it('sizes the composer and transcript viewport without clipping', () => {
-    expect(composerRows(0, 80)).toBe(1)
-    expect(composerRows(73, 80)).toBe(1)
-    expect(composerRows(74, 80)).toBe(2)
-    expect(composerRows(400, 20)).toBe(29)
+    expect(composerRows('', 80)).toBe(1)
+    expect(composerRows('x'.repeat(73), 80)).toBe(1)
+    expect(composerRows('x'.repeat(74), 80)).toBe(2)
+    expect(composerRows('x'.repeat(400), 20)).toBe(29)
+    expect(composerRows('one\ntwo', 80)).toBe(2)
+    expect(composerRows('\n', 80)).toBe(2)
     expect(transcriptViewport(24, 1)).toBe(19)
     expect(transcriptViewport(3, 5)).toBe(1)
+  })
+
+  it('wraps text on word boundaries and hard-breaks long words', () => {
+    expect(wrapText('hello world', 80)).toEqual(['hello world'])
+    expect(wrapText('hello world', 5)).toEqual(['hello', 'world'])
+    expect(wrapText('aa bb cc', 5)).toEqual(['aa bb', 'cc'])
+    expect(wrapText('supercalifragilistic', 5)).toEqual(['super', 'calif', 'ragil', 'istic'])
+    expect(wrapText('', 5)).toEqual([''])
   })
 })

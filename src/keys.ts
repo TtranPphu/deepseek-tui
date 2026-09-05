@@ -5,6 +5,7 @@ import type { Key } from 'ink'
 
 export type KeyAction =
   | 'submit'
+  | 'newline'
   | 'interrupt'
   | 'quit'
   | 'scroll-up'
@@ -22,7 +23,10 @@ export interface KeyBinding {
 }
 
 export const KEYBINDINGS: readonly KeyBinding[] = [
-  { action: 'submit', hint: 'enter send', match: (_ch, key) => key.return },
+  // Newline precedes submit: shift+enter also sets key.return on terminals
+  // that report it, and must not submit. Ctrl+J arrives as ch '\n'.
+  { action: 'newline', hint: 'ctrl+j newline', match: (ch, key) => ch === '\n' || (key.return && key.shift) },
+  { action: 'submit', hint: 'enter send/stop', match: (_ch, key) => key.return },
   { action: 'interrupt', hint: 'esc stop/quit', match: (_ch, key) => key.escape },
   { action: 'quit', hint: 'ctrl+c quit', match: (ch, key) => key.ctrl && ch.toLowerCase() === 'c' },
   { action: 'scroll-up', hint: '↑/↓ scroll', match: (_ch, key) => key.upArrow },

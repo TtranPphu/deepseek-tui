@@ -26,16 +26,48 @@ export function scrollWindow<T>(items: readonly T[], viewport: number, offset: n
 }
 
 /**
- * Composer content height in terminal rows for a wrapped single-line input.
- * Chrome inside the border: 2 border columns, 2 padding columns, 2 prompt
- * columns (`❯ `); the cursor block needs one cell beyond the input text.
- * @param inputLength - composer text length in cells.
+ * Composer content height in terminal rows for a wrapped, possibly multiline
+ * input. Chrome inside the border: 2 border columns, 2 padding columns, 2
+ * prompt columns (`❯ `); the cursor block needs one cell beyond the input text.
+ * @param input - composer text, `\n`-separated logical lines.
  * @param cols - terminal width.
  * @returns wrapped content line count, at least 1.
  */
-export function composerRows(inputLength: number, cols: number): number {
+export function composerRows(input: string, cols: number): number {
   const contentWidth = Math.max(1, cols - 6)
-  return Math.max(1, Math.ceil((inputLength + 1) / contentWidth))
+  let rows = 0
+  for (const line of input.split('\n')) {
+    rows += Math.max(1, Math.ceil((line.length + 1) / contentWidth))
+  }
+  return rows
+}
+
+/**
+ * Greedy word wrap at `width` columns; a word longer than the width hard-breaks.
+ * @param text - one logical line (no newlines).
+ * @param width - maximum cells per output line.
+ * @returns wrapped lines, at least one (empty input wraps to one empty line).
+ */
+export function wrapText(text: string, width: number): string[] {
+  const limit = Math.max(1, width)
+  if (text.length <= limit) return [text]
+  const out: string[] = []
+  let line = ''
+  for (const word of text.split(' ')) {
+    const candidate = line === '' ? word : `${line} ${word}`
+    if (candidate.length <= limit) {
+      line = candidate
+      continue
+    }
+    if (line !== '') out.push(line)
+    line = word
+    while (line.length > limit) {
+      out.push(line.slice(0, limit))
+      line = line.slice(limit)
+    }
+  }
+  out.push(line)
+  return out
 }
 
 /**

@@ -6,12 +6,13 @@
 import { render } from 'ink'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
+import type {} from '@deepseek-ai/dsh-agent-default-model'
 import { App } from './app.js'
 import type { HarnessServices } from './app.js'
 
 export const name = 'deepseek-tui'
 
-export const inject = ['agents']
+export const inject = ['agents', 'agentDefaultModel']
 
 let exited = false
 function exitProcess(): void {
@@ -36,7 +37,11 @@ export function apply(ctx: Context): void {
     restore()
   }, 'deepseek-tui.restoreTerminal()')
   const services: HarnessServices = {
-    create: (options) => ctx.agents.create(options),
+    // Entry points own model selection: read the composed default at creation.
+    create: (options) => ctx.agents.create({
+      ...options,
+      agentOptions: options.agentOptions ?? ctx.agentDefaultModel.currentSelection(),
+    }),
     on: (event, listener) => {
       const dispose = ctx.on(event, listener)
       return () => {
