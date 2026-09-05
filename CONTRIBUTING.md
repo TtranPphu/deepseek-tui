@@ -51,7 +51,7 @@ Examples:
 - If the commit is trivial, keep the body brief rather than omitting it entirely.
 - Only list the actual authors of the changes. An agent that merely executes the commit (runs `git commit`) but did not contribute to the code or content changes is NOT a co-author and MUST NOT be listed.
 - End the body with a blank line followed by a signature line:
-  - If an agent authored the changes, use the agent signature exactly as the executing agent's system prompt defines it (typically `<Agent Name> - <Model ID>`).
+  - If an agent authored the changes, always sign with the main session agent's identity: `OpenCode` followed by the session's model id (e.g. `OpenCode - deepseek-v4-flash`). An executing subagent signs as the delegating main agent (`OpenCode`) — never with its own subagent name, and never with the orchestrator's or another model's identity.
   - If the user authored the changes and an agent is only committing, use the user's git config `user.name` and `user.email`.
   - If the changes are co-authored by the user and one or more agents, include one line per author in this order: user, leading agent, remaining agents in alphabetical order.
 - Do NOT use `Co-Authored-By` or any other signature form.
