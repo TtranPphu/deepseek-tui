@@ -7,12 +7,13 @@ import { render } from 'ink'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
+import type {} from '@deepseek-ai/dsh-session-query'
 import { App } from './app.js'
 import type { HarnessServices } from './app.js'
 
 export const name = 'deepseek-tui'
 
-export const inject = ['agents', 'agentDefaultModel']
+export const inject = ['agents', 'agentDefaultModel', 'sessionQuery']
 
 let exited = false
 function exitProcess(): void {
@@ -42,6 +43,16 @@ export function apply(ctx: Context): void {
       ...options,
       agentOptions: options.agentOptions ?? ctx.agentDefaultModel.currentSelection(),
     }),
+    resume: (id) => ctx.agents.resume({
+      resumeSessionId: id,
+      agentOptions: ctx.agentDefaultModel.currentSelection(),
+    }),
+    list: () => ctx.sessionQuery.listSessions(),
+    readTitles: (ids) => ctx.sessionQuery.readTitleSnapshots(ids),
+    // ponytail: the harness ships no session-deletion surface
+    // (sessionPersistence exposes create/open/flush/stat/list only); the
+    // delete-confirm flow stays wired and reports the gap until it lands.
+    deleteSession: () => Promise.reject(new Error('the harness exposes no session deletion surface')),
     on: (event, listener) => {
       const dispose = ctx.on(event, listener)
       return () => {
@@ -50,5 +61,7 @@ export function apply(ctx: Context): void {
     },
   }
   const instance = render(<App services={services} onDone={exitProcess} />)
-  void instance.waitUntilExit().then(exitProcess)
+  // Exit funnels through App's onDone: its unmount cleanup awaits the agent
+  // handle's dispose (a durable session-log close) before process exit.
+  void instance.waitUntilExit()
 }

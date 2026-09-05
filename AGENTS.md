@@ -5,7 +5,7 @@ deepseek-tui is an opencode-like interactive terminal UI that boots *inside* a D
 ## How this app plugs into the harness
 
 - This package is a **profile bundle**: `package.json` declares `"dsh": { "bundle": { "patch": "./cordis.patch.yml" } }`; `cordis.patch.yml` inserts the app plugin into the profile tree on top of `@deepseek-ai/dsh-base`. A profile (`~/.dsh/profiles/<name>`) lists `@deepseek-ai/dsh-base` and this package in `dsh.profile.bundles` and resolves it from its own `node_modules` (`file:` dependency during development, registry/git when released).
-- The plugin runs in the same process as the harness and drives it through the ctx services it declares in `inject` (`agents` today; add `sessionPersistence`, `commands`, `approval`, … as features land). It never spawns a child runtime and never reads `DEEPSEEK_API_KEY` — provider access is the harness's own.
+- The plugin runs in the same process as the harness and drives it through the ctx services it declares in `inject` (`agents`, `agentDefaultModel`, `sessionQuery` today; add `sessionPersistence`, `commands`, `approval`, … as features land). It never spawns a child runtime and never reads `DEEPSEEK_API_KEY` — provider access is the harness's own.
 - Events arrive on the ctx event bus: `ctx.on('session/event', …)`, `ctx.on('agent/status', …)`, `ctx.on('approval/request', …)`. Render only what these events say — never guess agent state.
 - Service APIs are pre-stable. Types come from `file:` devDependencies on the sibling harness checkout (its built `lib/` carries `types`); `pnpm-workspace.yaml` rewrites those packages' internal `workspace:^` deps to the same checkout so `pnpm install` resolves outside the harness workspace. Keep every `@deepseek-ai/*` import type-only: the profile process resolves no harness modules at runtime, so a runtime value import breaks boot.
 - Every exit path must dispose the agent handle and unsubscribe `ctx.on` listeners; exiting the UI exits the profile process (`process.exit(0)`), so no orphaned runtime is possible.
@@ -17,11 +17,13 @@ cordis.patch.yml      bundle patch rows (plugin id/name) applied over the base l
 src/index.tsx         plugin entry: alt-screen setup/restore, Ink render, exit funnel
 src/app.tsx           app controller: session lifecycle, event subscriptions, key dispatch
 src/projection.ts     pure session-event/stream-frame → turn view model fold
-src/ui.tsx            dumb view components (header, transcript, footer, composer)
+src/sessions.ts       pure sidebar list model: entries, selection, confirm policy
+src/ui.tsx            dumb view components (header, sidebar, transcript, footer, composer)
 src/theme.ts          typed color/border tokens; the only source of styling literals
 src/keys.ts           KEYBINDINGS table + matchKey; the single source for key handling
 src/scroll.ts         pure layout math (scroll window, composer/viewport sizing, wrap)
 src/projection.test.ts vitest spec for the event → view projection
+src/sessions.test.ts  vitest spec for the sidebar list model
 src/shell.test.ts     vitest spec for the key table and layout math
 ```
 

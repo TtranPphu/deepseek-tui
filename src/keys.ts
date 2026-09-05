@@ -8,6 +8,9 @@ export type KeyAction =
   | 'newline'
   | 'interrupt'
   | 'quit'
+  | 'toggle-sidebar'
+  | 'new-session'
+  | 'delete-session'
   | 'scroll-up'
   | 'scroll-down'
   | 'page-up'
@@ -29,6 +32,9 @@ export const KEYBINDINGS: readonly KeyBinding[] = [
   { action: 'submit', hint: 'enter send/stop', match: (_ch, key) => key.return },
   { action: 'interrupt', hint: 'esc stop/quit', match: (_ch, key) => key.escape },
   { action: 'quit', hint: 'ctrl+c quit', match: (ch, key) => key.ctrl && ch.toLowerCase() === 'c' },
+  { action: 'toggle-sidebar', hint: 'tab sessions', match: (_ch, key) => key.tab },
+  { action: 'new-session', hint: 'ctrl+n new', match: (ch, key) => key.ctrl && ch.toLowerCase() === 'n' },
+  { action: 'delete-session', hint: 'ctrl+x delete', match: (ch, key) => key.ctrl && ch.toLowerCase() === 'x' },
   { action: 'scroll-up', hint: '↑/↓ scroll', match: (_ch, key) => key.upArrow },
   { action: 'scroll-down', hint: '', match: (_ch, key) => key.downArrow },
   { action: 'page-up', hint: 'pgup/pgdn page', match: (_ch, key) => key.pageUp },

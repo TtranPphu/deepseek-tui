@@ -34,19 +34,32 @@ describe('matchKey', () => {
     expect(matchKey('', key({ downArrow: true }))).toBe('scroll-down')
     expect(matchKey('', key({ pageUp: true }))).toBe('page-up')
     expect(matchKey('', key({ pageDown: true }))).toBe('page-down')
+    expect(matchKey('\t', key({ tab: true }))).toBe('toggle-sidebar')
+    expect(matchKey('n', key({ ctrl: true }))).toBe('new-session')
+    expect(matchKey('x', key({ ctrl: true }))).toBe('delete-session')
     expect(matchKey('\x7f', key({ backspace: true }))).toBe('backspace')
   })
 
   it('treats plain characters as text and swallows unbound control keys', () => {
     expect(matchKey('a', key())).toBe('text')
     expect(matchKey('pasted run', key())).toBe('text')
-    expect(matchKey('x', key({ ctrl: true }))).toBeNull()
+    expect(matchKey('g', key({ ctrl: true }))).toBeNull()
     expect(matchKey('', key())).toBeNull()
   })
 
   it('keeps one footer hint per documented group', () => {
     const hinted = KEYBINDINGS.filter((binding) => binding.hint).map((binding) => binding.action)
-    expect(hinted).toEqual(['newline', 'submit', 'interrupt', 'quit', 'scroll-up', 'page-up'])
+    expect(hinted).toEqual([
+      'newline',
+      'submit',
+      'interrupt',
+      'quit',
+      'toggle-sidebar',
+      'new-session',
+      'delete-session',
+      'scroll-up',
+      'page-up',
+    ])
   })
 })
 

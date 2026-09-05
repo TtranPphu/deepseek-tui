@@ -12,9 +12,11 @@ export const theme = {
     event: '#d29922',
     error: '#f85149',
     cursor: '#7aa2f7',
+    selectedBg: '#30363d',
   },
   borders: {
     composer: 'round',
+    sidebar: 'single',
   },
 } as const
 

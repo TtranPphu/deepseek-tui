@@ -7,6 +7,8 @@ import type { JSX } from 'react'
 import { theme } from './theme.js'
 import { KEYBINDINGS } from './keys.js'
 import { scrollWindow, wrapText } from './scroll.js'
+import { relativeTime, visibleStart } from './sessions.js'
+import type { SidebarEntry } from './sessions.js'
 import type { Projection, ToolPart, TurnPart, TurnView } from './projection.js'
 
 export type SessionStatus = 'connecting' | 'idle' | 'running' | 'failed'
@@ -15,6 +17,7 @@ export interface SessionInfo {
   readonly id: string
   readonly model?: string | undefined
   readonly provider?: string | undefined
+  readonly title?: string | undefined
 }
 
 export interface RenderLine {
@@ -92,12 +95,71 @@ export function Header({ session, cols }: { session: SessionInfo | null; cols: n
     'deepseek-tui',
     session?.model,
     session?.provider,
-    session ? `session ${session.id.slice(0, 8)}` : 'connecting…',
+    session ? (session.title ?? `session ${session.id.slice(0, 8)}`) : 'connecting…',
   ].filter((s): s is string => s !== undefined)
   return (
     <Text backgroundColor={theme.colors.headerBg} color={theme.colors.headerFg} bold wrap="truncate-end">
       {` ${segments.join(' · ')} `.padEnd(cols)}
     </Text>
+  )
+}
+
+export const SIDEBAR_WIDTH = 28
+
+interface SidebarProps {
+  readonly entries: readonly SidebarEntry[]
+  readonly selectedId: string | null
+  readonly activeId: string | null
+  readonly now: number
+  readonly rows: number
+}
+
+function SidebarRow({ entry, selected, active, now }: { entry: SidebarEntry; selected: boolean; active: boolean; now: number }): JSX.Element {
+  return (
+    <Box flexDirection="column">
+      <Text
+        bold={selected}
+        backgroundColor={selected ? theme.colors.selectedBg : undefined}
+        color={active ? theme.colors.accent : undefined}
+        wrap="truncate-end"
+      >
+        {`${selected ? '›' : ' '}${active ? '● ' : ' '}${entry.title}`}
+      </Text>
+      <Text color={theme.colors.muted} wrap="truncate-end">
+        {`    ${relativeTime(now, entry.createdAt)}${entry.live ? ' · live' : ''}`}
+      </Text>
+    </Box>
+  )
+}
+
+export function Sidebar({ entries, selectedId, activeId, now, rows }: SidebarProps): JSX.Element {
+  // Two rows per entry plus the heading; window the list around the selection.
+  const capacity = Math.max(1, Math.floor((rows - 1) / 2))
+  const selectedIndex = Math.max(0, entries.findIndex((entry) => entry.id === selectedId))
+  const start = visibleStart(selectedIndex, entries.length, capacity)
+  return (
+    <Box
+      flexDirection="column"
+      width={SIDEBAR_WIDTH}
+      height={rows}
+      borderStyle={theme.borders.sidebar}
+      borderColor={theme.colors.border}
+      borderTop={false}
+      borderBottom={false}
+      borderLeft={false}
+    >
+      <Text bold color={theme.colors.muted}>{' sessions'}</Text>
+      {entries.length === 0 ? <Text color={theme.colors.muted}>{' none yet'}</Text> : null}
+      {entries.slice(start, start + capacity).map((entry) => (
+        <SidebarRow
+          key={entry.id}
+          entry={entry}
+          selected={entry.id === selectedId}
+          active={entry.id === activeId}
+          now={now}
+        />
+      ))}
+    </Box>
   )
 }
 
