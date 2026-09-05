@@ -51,7 +51,9 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
   const [session, setSession] = useState<SessionInfo | null>(null)
   // Resize re-render: Ink redraws on its own, but the viewport math reads
   // stdout.rows/columns, so track them as state to guarantee a relayout.
-  const [size, setSize] = useState({ rows: stdout?.rows ?? 24, cols: stdout?.columns ?? 80 })
+  // `||` catches 0: a degenerate pty (script, CI) reports 0x0 and would
+  // otherwise blank every region.
+  const [size, setSize] = useState({ rows: stdout?.rows || 24, cols: stdout?.columns || 80 })
   const agentRef = useRef<Agent | null>(null)
   const handleRef = useRef<AgentHandle | null>(null)
   const onDoneRef = useRef(onDone)
@@ -60,7 +62,7 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
 
   useEffect(() => {
     if (!stdout) return
-    const onResize = (): void => setSize({ rows: stdout.rows, cols: stdout.columns })
+    const onResize = (): void => setSize({ rows: stdout.rows || 24, cols: stdout.columns || 80 })
     stdout.on('resize', onResize)
     return () => {
       stdout.off('resize', onResize)
