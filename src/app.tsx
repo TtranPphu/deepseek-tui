@@ -17,7 +17,7 @@ import { matchKey } from './keys.js'
 import { clampScroll, composerRows, transcriptViewport } from './scroll.js'
 import { applySessionEvent, createProjection, createStreamProjector, echoUser } from './projection.js'
 import type { Projection, StreamProjector } from './projection.js'
-import { confirmationPrompt, moveSelection, needsConfirmation, titlesFrom, toSidebarEntries } from './sessions.js'
+import { confirmationPrompt, isAlreadyDeleted, moveSelection, needsConfirmation, titlesFrom, toSidebarEntries } from './sessions.js'
 import type { PendingAction, SidebarEntry } from './sessions.js'
 import { theme } from './theme.js'
 import { Composer, Footer, Header, SIDEBAR_WIDTH, Sidebar, Transcript, renderLines } from './ui.js'
@@ -179,19 +179,25 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
         await openSession({ kind: 'resume', id: action.id })
         return
       case 'delete': {
+        // The active session's agent handle holds its write claim, and
+        // sessionPersistence.delete refuses owned ids: switch away first so
+        // the open teardown disposes the handle before the delete.
+        if (agentRef.current?.session.id === action.id) {
+          const next = sessions.find((entry) => entry.id !== action.id)
+          await openSession(next === undefined ? { kind: 'new' } : { kind: 'resume', id: next.id })
+        }
         try {
           await servicesRef.current.deleteSession(action.id)
         } catch (error) {
+          if (isAlreadyDeleted(error)) {
+            await refreshSessions()
+            return
+          }
           notify(`delete failed: ${errorMessage(error)}`)
           return
         }
         notify('session deleted')
-        if (agentRef.current?.session.id === action.id) {
-          const next = sessions.find((entry) => entry.id !== action.id)
-          await openSession(next === undefined ? { kind: 'new' } : { kind: 'resume', id: next.id })
-        } else {
-          await refreshSessions()
-        }
+        await refreshSessions()
         return
       }
     }

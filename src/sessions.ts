@@ -102,3 +102,13 @@ export function confirmationPrompt(action: PendingAction): string {
       return 'turn running — stop it and start a new session? enter confirms, esc cancels'
   }
 }
+
+/**
+ * True when a delete rejection names an already-absent session, which the
+ * sidebar treats as deleted. Harness error classes stay type-only imports
+ * (the profile resolves no harness modules at runtime), so this matches the
+ * stable `name` of SessionPersistenceNotFoundError instead of `instanceof`.
+ */
+export function isAlreadyDeleted(error: unknown): boolean {
+  return error instanceof Error && error.name === 'SessionPersistenceNotFoundError'
+}

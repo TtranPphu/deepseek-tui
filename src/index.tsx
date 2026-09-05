@@ -7,13 +7,14 @@ import { render } from 'ink'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
+import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-session-query'
 import { App } from './app.js'
 import type { HarnessServices } from './app.js'
 
 export const name = 'deepseek-tui'
 
-export const inject = ['agents', 'agentDefaultModel', 'sessionQuery']
+export const inject = ['agents', 'agentDefaultModel', 'sessionPersistence', 'sessionQuery']
 
 let exited = false
 function exitProcess(): void {
@@ -49,10 +50,7 @@ export function apply(ctx: Context): void {
     }),
     list: () => ctx.sessionQuery.listSessions(),
     readTitles: (ids) => ctx.sessionQuery.readTitleSnapshots(ids),
-    // ponytail: the harness ships no session-deletion surface
-    // (sessionPersistence exposes create/open/flush/stat/list only); the
-    // delete-confirm flow stays wired and reports the gap until it lands.
-    deleteSession: () => Promise.reject(new Error('the harness exposes no session deletion surface')),
+    deleteSession: (id) => ctx.sessionPersistence.delete(id),
     on: (event, listener) => {
       const dispose = ctx.on(event, listener)
       return () => {

@@ -41,6 +41,7 @@
     "@deepseek-ai/dsh-agent-default-model": "file:../deepseek-harness/packages/core/agent-default-model",
     "@deepseek-ai/dsh-llm": "file:../deepseek-harness/packages/llm/llm",
     "@deepseek-ai/dsh-session": "file:../deepseek-harness/packages/core/session",
+    "@deepseek-ai/dsh-session-persistence": "file:../deepseek-harness/packages/session/session-persistence",
     "@deepseek-ai/dsh-session-query": "file:../deepseek-harness/packages/session-query/session-query",
     "@deepseek-ai/dsh-session-title": "file:../deepseek-harness/packages/session/session-title",
     "@types/node": "^22.10.0",

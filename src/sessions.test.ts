@@ -5,6 +5,7 @@ import type { SessionHeader, SessionId, SessionSeq } from '@deepseek-ai/dsh-sess
 import {
   UNTITLED,
   confirmationPrompt,
+  isAlreadyDeleted,
   moveSelection,
   needsConfirmation,
   relativeTime,
@@ -120,5 +121,18 @@ describe('confirmationPrompt', () => {
     expect(confirmationPrompt({ kind: 'delete', id: 'a' as SessionId })).toContain('delete')
     expect(confirmationPrompt({ kind: 'open', id: 'a' as SessionId })).toContain('turn running')
     expect(confirmationPrompt({ kind: 'new' })).toContain('turn running')
+  })
+})
+
+describe('isAlreadyDeleted', () => {
+  it('matches only the persistence not-found error name', () => {
+    const notFound = new Error('session "a" not found')
+    notFound.name = 'SessionPersistenceNotFoundError'
+    expect(isAlreadyDeleted(notFound)).toBe(true)
+    const owned = new Error('session "a" is already owned by an active write handle')
+    owned.name = 'SessionAlreadyOwnedError'
+    expect(isAlreadyDeleted(owned)).toBe(false)
+    expect(isAlreadyDeleted(new Error('boom'))).toBe(false)
+    expect(isAlreadyDeleted('SessionPersistenceNotFoundError')).toBe(false)
   })
 })
