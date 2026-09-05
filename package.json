@@ -38,6 +38,7 @@
   "devDependencies": {
     "@deepseek-ai/cordis": "file:../deepseek-harness/vendor/cordis",
     "@deepseek-ai/dsh-agent": "file:../deepseek-harness/packages/core/agent",
+    "@deepseek-ai/dsh-agent-default-model": "file:../deepseek-harness/packages/core/agent-default-model",
     "@deepseek-ai/dsh-llm": "file:../deepseek-harness/packages/llm/llm",
     "@deepseek-ai/dsh-session": "file:../deepseek-harness/packages/core/session",
     "@types/node": "^22.10.0",

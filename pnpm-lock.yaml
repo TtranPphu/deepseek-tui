@@ -9,6 +9,8 @@ overrides:
   '@deepseek-ai/cosmokit': file:../deepseek-harness/vendor/cosmokit
   '@deepseek-ai/schemastery': file:../deepseek-harness/vendor/schemastery
   '@deepseek-ai/dsh-agent': file:../deepseek-harness/packages/core/agent
+  '@deepseek-ai/dsh-agent-default-model': file:../deepseek-harness/packages/core/agent-default-model
+  '@deepseek-ai/dsh-settings': file:../deepseek-harness/packages/settings/settings
   '@deepseek-ai/dsh-brand': file:../deepseek-harness/packages/util/brand
   '@deepseek-ai/dsh-llm': file:../deepseek-harness/packages/llm/llm
   '@deepseek-ai/dsh-session': file:../deepseek-harness/packages/core/session
@@ -34,6 +36,9 @@ importers:
       '@deepseek-ai/dsh-agent':
         specifier: file:../deepseek-harness/packages/core/agent
         version: file:../deepseek-harness/packages/core/agent(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)(@deepseek-ai/dsh-llm@file:../deepseek-harness/packages/llm/llm(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis))(@deepseek-ai/dsh-session@file:../deepseek-harness/packages/core/session(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis))
+      '@deepseek-ai/dsh-agent-default-model':
+        specifier: file:../deepseek-harness/packages/core/agent-default-model
+        version: file:../deepseek-harness/packages/core/agent-default-model(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)(@deepseek-ai/dsh-agent@file:../deepseek-harness/packages/core/agent(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)(@deepseek-ai/dsh-llm@file:../deepseek-harness/packages/llm/llm(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis))(@deepseek-ai/dsh-session@file:../deepseek-harness/packages/core/session(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)))(@deepseek-ai/dsh-llm@file:../deepseek-harness/packages/llm/llm(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis))(@deepseek-ai/dsh-session@file:../deepseek-harness/packages/core/session(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis))
       '@deepseek-ai/dsh-llm':
         specifier: file:../deepseek-harness/packages/llm/llm
         version: file:../deepseek-harness/packages/llm/llm(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)
@@ -77,6 +82,13 @@ packages:
   '@deepseek-ai/cosmokit@file:../deepseek-harness/vendor/cosmokit':
     resolution: {directory: ../deepseek-harness/vendor/cosmokit, type: directory}
 
+  '@deepseek-ai/dsh-agent-default-model@file:../deepseek-harness/packages/core/agent-default-model':
+    resolution: {directory: ../deepseek-harness/packages/core/agent-default-model, type: directory}
+    peerDependencies:
+      '@deepseek-ai/cordis': workspace:^
+      '@deepseek-ai/dsh-agent': workspace:^
+      '@deepseek-ai/dsh-llm': workspace:^
+
   '@deepseek-ai/dsh-agent@file:../deepseek-harness/packages/core/agent':
     resolution: {directory: ../deepseek-harness/packages/core/agent, type: directory}
     peerDependencies:
@@ -103,6 +115,13 @@ packages:
     peerDependencies:
       '@deepseek-ai/cordis': workspace:^
       '@deepseek-ai/dsh-scope': workspace:^
+
+  '@deepseek-ai/dsh-settings@file:../deepseek-harness/packages/settings/settings':
+    resolution: {directory: ../deepseek-harness/packages/settings/settings, type: directory}
+    peerDependencies:
+      '@deepseek-ai/cordis': workspace:^
+      '@deepseek-ai/dsh-invariants': workspace:^
+      '@deepseek-ai/dsh-session': workspace:^
 
   '@deepseek-ai/dsh-timeout@file:../deepseek-harness/packages/util/timeout':
     resolution: {directory: ../deepseek-harness/packages/util/timeout, type: directory}
@@ -889,6 +908,17 @@ snapshots:
 
   '@deepseek-ai/cosmokit@file:../deepseek-harness/vendor/cosmokit': {}
 
+  '@deepseek-ai/dsh-agent-default-model@file:../deepseek-harness/packages/core/agent-default-model(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)(@deepseek-ai/dsh-agent@file:../deepseek-harness/packages/core/agent(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)(@deepseek-ai/dsh-llm@file:../deepseek-harness/packages/llm/llm(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis))(@deepseek-ai/dsh-session@file:../deepseek-harness/packages/core/session(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)))(@deepseek-ai/dsh-llm@file:../deepseek-harness/packages/llm/llm(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis))(@deepseek-ai/dsh-session@file:../deepseek-harness/packages/core/session(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis))':
+    dependencies:
+      '@deepseek-ai/cordis': file:../deepseek-harness/vendor/cordis
+      '@deepseek-ai/dsh-agent': file:../deepseek-harness/packages/core/agent(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)(@deepseek-ai/dsh-llm@file:../deepseek-harness/packages/llm/llm(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis))(@deepseek-ai/dsh-session@file:../deepseek-harness/packages/core/session(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis))
+      '@deepseek-ai/dsh-llm': file:../deepseek-harness/packages/llm/llm(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)
+      '@deepseek-ai/dsh-settings': file:../deepseek-harness/packages/settings/settings(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)(@deepseek-ai/dsh-session@file:../deepseek-harness/packages/core/session(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis))
+      '@deepseek-ai/schemastery': file:../deepseek-harness/vendor/schemastery
+    transitivePeerDependencies:
+      - '@deepseek-ai/dsh-invariants'
+      - '@deepseek-ai/dsh-session'
+
   '@deepseek-ai/dsh-agent@file:../deepseek-harness/packages/core/agent(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)(@deepseek-ai/dsh-llm@file:../deepseek-harness/packages/llm/llm(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis))(@deepseek-ai/dsh-session@file:../deepseek-harness/packages/core/session(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis))':
     dependencies:
       '@deepseek-ai/cordis': file:../deepseek-harness/vendor/cordis
@@ -917,6 +947,14 @@ snapshots:
       '@deepseek-ai/dsh-brand': file:../deepseek-harness/packages/util/brand(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)
       '@deepseek-ai/dsh-llm': file:../deepseek-harness/packages/llm/llm(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)
       '@deepseek-ai/dsh-util-values': file:../deepseek-harness/packages/util/values(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)
+
+  '@deepseek-ai/dsh-settings@file:../deepseek-harness/packages/settings/settings(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)(@deepseek-ai/dsh-session@file:../deepseek-harness/packages/core/session(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis))':
+    dependencies:
+      '@deepseek-ai/cordis': file:../deepseek-harness/vendor/cordis
+      '@deepseek-ai/dsh-brand': file:../deepseek-harness/packages/util/brand(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)
+      '@deepseek-ai/dsh-session': file:../deepseek-harness/packages/core/session(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)
+      '@deepseek-ai/dsh-util-values': file:../deepseek-harness/packages/util/values(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)
+      '@deepseek-ai/schemastery': file:../deepseek-harness/vendor/schemastery
 
   '@deepseek-ai/dsh-timeout@file:../deepseek-harness/packages/util/timeout(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)':
     dependencies:
