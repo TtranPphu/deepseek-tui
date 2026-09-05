@@ -25,6 +25,7 @@
   "scripts": {
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
     "clean": "rm -rf lib *.tsbuildinfo"
   },
   "engines": {
@@ -35,9 +36,14 @@
     "react": "^19.2.0"
   },
   "devDependencies": {
+    "@deepseek-ai/cordis": "file:../deepseek-harness/vendor/cordis",
+    "@deepseek-ai/dsh-agent": "file:../deepseek-harness/packages/core/agent",
+    "@deepseek-ai/dsh-llm": "file:../deepseek-harness/packages/llm/llm",
+    "@deepseek-ai/dsh-session": "file:../deepseek-harness/packages/core/session",
     "@types/node": "^22.10.0",
     "@types/react": "^19.2.0",
     "tsx": "^4.19.0",
-    "typescript": "^5.7.0"
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.4"
   }
 }

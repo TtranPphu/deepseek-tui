@@ -1,2 +1,20 @@
 allowBuilds:
   esbuild: true
+
+# The file: devDependencies on harness packages carry `workspace:^` specs in
+# their manifests, which only resolve inside the harness workspace. Peers stay
+# uninstalled (types only), and every internal runtime dep is rewritten to its
+# checkout location so pnpm never tries the registry or the workspace protocol.
+autoInstallPeers: false
+overrides:
+  "@deepseek-ai/cordis": file:../deepseek-harness/vendor/cordis
+  "@deepseek-ai/cosmokit": file:../deepseek-harness/vendor/cosmokit
+  "@deepseek-ai/schemastery": file:../deepseek-harness/vendor/schemastery
+  "@deepseek-ai/dsh-agent": file:../deepseek-harness/packages/core/agent
+  "@deepseek-ai/dsh-brand": file:../deepseek-harness/packages/util/brand
+  "@deepseek-ai/dsh-llm": file:../deepseek-harness/packages/llm/llm
+  "@deepseek-ai/dsh-session": file:../deepseek-harness/packages/core/session
+  "@deepseek-ai/dsh-timeout": file:../deepseek-harness/packages/util/timeout
+  "@deepseek-ai/dsh-typert-protocol": file:../deepseek-harness/packages/typert/protocol
+  "@deepseek-ai/dsh-util-crypto": file:../deepseek-harness/packages/util/crypto
+  "@deepseek-ai/dsh-util-values": file:../deepseek-harness/packages/util/values
