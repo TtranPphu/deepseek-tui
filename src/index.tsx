@@ -7,6 +7,7 @@ import { render } from 'ink'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
+import type {} from '@deepseek-ai/dsh-commands'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-session-query'
 import type {} from '@deepseek-ai/dsh-user-approval'
@@ -15,7 +16,7 @@ import type { HarnessServices } from './app.js'
 
 export const name = 'deepseek-tui'
 
-export const inject = ['agents', 'agentDefaultModel', 'sessionPersistence', 'sessionQuery']
+export const inject = ['agents', 'agentDefaultModel', 'commands', 'sessionPersistence', 'sessionQuery']
 
 let exited = false
 function exitProcess(): void {
@@ -52,6 +53,10 @@ export function apply(ctx: Context): void {
     list: () => ctx.sessionQuery.listSessions(),
     readTitles: (ids) => ctx.sessionQuery.readTitleSnapshots(ids),
     deleteSession: (id) => ctx.sessionPersistence.delete(id),
+    // Slash commands resolve per agent (scoped shadowing) and run through the
+    // harness registry — this UI never keeps a parallel command list.
+    listCommands: (agent) => ctx.commands.list(agent),
+    executeCommand: (agent, line, signal) => ctx.commands.execute(agent, line, [], signal),
     on: (event, listener) => {
       const dispose = ctx.on(event, listener)
       return () => {

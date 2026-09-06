@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Key } from 'ink'
 import { KEYBINDINGS, matchApprovalKey, matchKey } from './keys.js'
-import { clampScroll, composerRows, scrollWindow, transcriptViewport, wrapText } from './scroll.js'
+import { clampScroll, clampTop, composerRows, scrollWindow, topWindow, transcriptViewport, wrapText } from './scroll.js'
 
 function key(overrides: Partial<Key> = {}): Key {
   return {
@@ -30,6 +30,8 @@ describe('matchKey', () => {
     expect(matchKey('\r', key({ return: true, shift: true }))).toBe('newline')
     expect(matchKey('', key({ escape: true }))).toBe('interrupt')
     expect(matchKey('c', key({ ctrl: true }))).toBe('quit')
+    expect(matchKey('?', key())).toBe('help')
+    expect(matchKey('?', key({ shift: true }))).toBe('help')
     expect(matchKey('', key({ upArrow: true }))).toBe('scroll-up')
     expect(matchKey('', key({ downArrow: true }))).toBe('scroll-down')
     expect(matchKey('', key({ pageUp: true }))).toBe('page-up')
@@ -67,6 +69,7 @@ describe('matchKey', () => {
       'submit',
       'interrupt',
       'quit',
+      'help',
       'toggle-sidebar',
       'new-session',
       'delete-session',
@@ -109,5 +112,15 @@ describe('scroll math', () => {
     expect(wrapText('aa bb cc', 5)).toEqual(['aa bb', 'cc'])
     expect(wrapText('supercalifragilistic', 5)).toEqual(['super', 'calif', 'ragil', 'istic'])
     expect(wrapText('', 5)).toEqual([''])
+  })
+
+  it('clamps and slices top-anchored overlay windows', () => {
+    const items = Array.from({ length: 30 }, (_, i) => i)
+    expect(clampTop(-2, 30, 10)).toBe(0)
+    expect(clampTop(99, 30, 10)).toBe(20)
+    expect(clampTop(5, 8, 10)).toBe(0)
+    expect(topWindow(items, 10, 0)).toEqual(items.slice(0, 10))
+    expect(topWindow(items, 10, 5)).toEqual(items.slice(5, 15))
+    expect(topWindow(items, 10, 99)).toEqual(items.slice(20))
   })
 })

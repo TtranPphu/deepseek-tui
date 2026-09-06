@@ -6,12 +6,14 @@ import { Box, Text } from 'ink'
 import type { JSX } from 'react'
 import { theme } from './theme.js'
 import { APPROVAL_HINT, KEYBINDINGS } from './keys.js'
-import { scrollWindow, wrapText } from './scroll.js'
+import { clampScroll, scrollWindow, topWindow, wrapText } from './scroll.js'
 import { relativeTime, visibleStart } from './sessions.js'
 import type { SidebarEntry } from './sessions.js'
 import { displayToolName, summarizeArgs } from './projection.js'
 import type { Projection, ToolPart, TurnPart, TurnView } from './projection.js'
 import type { ApprovalPrompt } from './approval.js'
+import type { HelpLine } from './help.js'
+import type { PaletteCommand } from './commands.js'
 
 export type SessionStatus = 'connecting' | 'idle' | 'running' | 'failed'
 
@@ -34,6 +36,12 @@ export interface RenderLine {
 export interface TranscriptView {
   readonly focusedCallId: string | null
   readonly approvalCallId: string | null
+}
+
+/** One controller notice; errors render in the error tone. */
+export interface Notice {
+  readonly text: string
+  readonly error?: boolean
 }
 
 const RESULT_PREVIEW_LINES = 2
@@ -117,16 +125,22 @@ function turnLines(turn: TurnView, cols: number, spinner: string, view: Transcri
   return lines
 }
 
-/** Flatten the projection into display rows: notices first, then turns in order. */
+/**
+ * Flatten the projection into display rows: turns first, then notices at the
+ * tail so a fresh notice sits in the default tail-pinned view.
+ */
 export function renderLines(
-  notices: readonly string[],
+  notices: readonly Notice[],
   projection: Projection,
   cols: number,
   spinner: string,
   view: TranscriptView = { focusedCallId: null, approvalCallId: null },
 ): RenderLine[] {
-  const lines: RenderLine[] = notices.map((text) => ({ kind: 'sys' as const, text }))
+  const lines: RenderLine[] = []
   for (const turn of projection.turns) lines.push(...turnLines(turn, cols, spinner, view))
+  for (const notice of notices) {
+    lines.push({ kind: 'sys', text: notice.text, ...notice.error === true ? { tone: 'error' } : {} })
+  }
   return lines
 }
 
@@ -224,7 +238,7 @@ function LineRow({ line }: { line: RenderLine }): JSX.Element {
     case 'error':
       return <Text color={theme.colors.error} wrap="truncate-end">{line.text}</Text>
     default:
-      return <Text color={theme.colors.muted} wrap="truncate-end">{line.text}</Text>
+      return <Text color={line.tone === 'error' ? theme.colors.error : theme.colors.muted} wrap="truncate-end">{line.text}</Text>
   }
 }
 
@@ -265,11 +279,21 @@ interface FooterProps {
   readonly activity: 'thinking' | 'tool' | null
   readonly awaitingApproval: boolean
   readonly spinner: string
+  /** Running slash command name; overrides the working state while it runs. */
+  readonly busyCommand: string | null
 }
 
-export function Footer({ status, scroll, activity, awaitingApproval, spinner }: FooterProps): JSX.Element {
+export function Footer({ status, scroll, activity, awaitingApproval, spinner, busyCommand }: FooterProps): JSX.Element {
   const hints = KEYBINDINGS.filter((binding) => binding.hint).map((binding) => binding.hint).join(' · ')
-  const working = awaitingApproval ? 'awaiting approval' : activity === 'tool' ? `${spinner} tool running` : activity === 'thinking' ? `${spinner} working` : status
+  const working = busyCommand !== null
+    ? `${spinner} running /${busyCommand}`
+    : awaitingApproval
+      ? 'awaiting approval'
+      : activity === 'tool'
+        ? `${spinner} tool running`
+        : activity === 'thinking'
+          ? `${spinner} working`
+          : status
   const state = scroll > 0 ? `${working} · ↑${scroll} more` : working
   return (
     <Box justifyContent="space-between" width="100%">
@@ -280,7 +304,7 @@ export function Footer({ status, scroll, activity, awaitingApproval, spinner }: 
   )
 }
 
-const PLACEHOLDER = 'ask anything…'
+const PLACEHOLDER = 'ask anything… · type / for commands'
 
 export function Composer({ input, busy }: { input: string; busy: boolean }): JSX.Element {
   const lines = input.split('\n')
@@ -306,6 +330,98 @@ export function Composer({ input, busy }: { input: string; busy: boolean }): JSX
           </Text>
         ))
       )}
+    </Box>
+  )
+}
+
+/** Rows the slash palette may show before truncation costs the user. */
+export const PALETTE_MAX_ROWS = 8
+
+/**
+ * The slash-command palette: the typed query on top, the fuzzy-matched
+ * roster below with the pick highlighted. Dumb — the controller owns the
+ * query, the selection, and what Enter runs.
+ */
+export function CommandPalette({
+  query,
+  commands,
+  selected,
+  cols,
+}: {
+  readonly query: string
+  readonly commands: readonly PaletteCommand[]
+  readonly selected: number
+  readonly cols: number
+}): JSX.Element {
+  // Window the match list around the pick (centered, like the sidebar) so the
+  // highlight stays visible on rosters longer than the palette.
+  const windowStart = visibleStart(Math.max(0, selected), commands.length, PALETTE_MAX_ROWS)
+  const visible = commands.length === 0
+    ? [{ name: '', description: 'no matching commands', source: 'local' as const }]
+    : commands.slice(windowStart, windowStart + PALETTE_MAX_ROWS)
+  return (
+    <Box borderStyle={theme.borders.composer} borderColor={theme.colors.accent} paddingX={1} flexDirection="column">
+      <Text wrap="truncate-end">
+        <Text color={theme.colors.accent}>{'❯ '}</Text>
+        <Text bold>{query}</Text>
+        <Text color={theme.colors.cursor}>▌</Text>
+      </Text>
+      {visible.map((command, index) => {
+        const isSelected = commands.length > 0 && windowStart + index === selected
+        if (command.name === '') {
+          return <Text key="empty" color={theme.colors.muted} wrap="truncate-end">{command.description}</Text>
+        }
+        const alias = command.aliases?.length === 1 ? ` (alias /${command.aliases[0]})` : ''
+        const usage = command.usage === undefined ? '' : ` ${command.usage}`
+        return (
+          <Text key={command.name} bold={isSelected} wrap="truncate-end"
+            backgroundColor={isSelected ? theme.colors.selectedBg : undefined}>
+            <Text color={isSelected ? undefined : theme.colors.muted}>{isSelected ? '› ' : '  '}</Text>
+            <Text color={theme.colors.accent}>{`/${command.name}${usage}`}</Text>
+            <Text color={isSelected ? undefined : theme.colors.muted}>{`${alias} — ${command.description}`}</Text>
+          </Text>
+        )
+      })}
+    </Box>
+  )
+}
+
+/** Fixed overlay chrome: 2 border rows, header and footer hint. */
+export const HELP_CHROME_ROWS = 4
+
+/**
+ * Full-screen help overlay: fixed header and footer hints around a
+ * top-anchored scrollable list of help lines. Dumb — the controller holds
+ * the lines and the scroll position.
+ */
+export function HelpOverlay({
+  lines,
+  top,
+  rows,
+  cols,
+}: {
+  readonly lines: readonly HelpLine[]
+  readonly top: number
+  readonly rows: number
+  readonly cols: number
+}): JSX.Element {
+  const viewport = Math.max(1, rows - HELP_CHROME_ROWS)
+  const visible = topWindow(lines, viewport, top)
+  return (
+    <Box flexDirection="column" width={cols} height={rows}
+      borderStyle="double" borderColor={theme.colors.accent}>
+      <Box>
+        <Text bold color={theme.colors.headerFg} wrap="truncate-end">{` deepseek-tui help — esc or ? closes`}</Text>
+      </Box>
+      {visible.map((line, index) => (
+        line.kind === 'section'
+          ? <Text key={index} bold color={theme.colors.accent} wrap="truncate-end">{` ${line.text}`}</Text>
+          : <Text key={index} color={theme.colors.muted} wrap="truncate-end">{`  ${line.text}`}</Text>
+      ))}
+      <Box justifyContent="space-between">
+        <Text color={theme.colors.muted} wrap="truncate-end">{' esc / ? close · ↑/↓ pgup/pgdn scroll'}</Text>
+        <Text color={theme.colors.muted} wrap="truncate-end">{top > 0 ? `↑${top} more` : ''}</Text>
+      </Box>
     </Box>
   )
 }

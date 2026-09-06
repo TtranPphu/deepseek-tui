@@ -26,6 +26,29 @@ export function scrollWindow<T>(items: readonly T[], viewport: number, offset: n
 }
 
 /**
+ * Clamp a top-anchored scroll offset (help overlay) into reachable range.
+ * @param top - first visible row from the top of the content.
+ * @param total - total content lines.
+ * @param viewport - visible rows.
+ * @returns the clamped offset; 0 when everything fits.
+ */
+export function clampTop(top: number, total: number, viewport: number): number {
+  return Math.min(Math.max(0, top), Math.max(0, total - viewport))
+}
+
+/**
+ * Slice the visible window of a top-anchored scrollable list.
+ * @param items - all content lines.
+ * @param viewport - visible rows.
+ * @param top - first visible row index.
+ * @returns the window starting at `top` (clamped).
+ */
+export function topWindow<T>(items: readonly T[], viewport: number, top: number): readonly T[] {
+  const start = clampTop(top, items.length, viewport)
+  return items.slice(start, start + viewport)
+}
+
+/**
  * Composer content height in terminal rows for a wrapped, possibly multiline
  * input. Chrome inside the border: 2 border columns, 2 padding columns, 2
  * prompt columns (`❯ `); the cursor block needs one cell beyond the input text.

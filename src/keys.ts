@@ -1,6 +1,7 @@
 // Keybinding table: the single visible source for every key the app handles.
-// The footer help line renders from this table and the input controller
-// dispatches through matchKey — no key literals in handlers or components.
+// The footer help line renders from this table, the input controller
+// dispatches through matchKey, and the help overlay groups rows by `group` —
+// no key literals in handlers or components.
 import type { Key } from 'ink'
 
 export type KeyAction =
@@ -8,6 +9,7 @@ export type KeyAction =
   | 'newline'
   | 'interrupt'
   | 'quit'
+  | 'help'
   | 'toggle-sidebar'
   | 'new-session'
   | 'delete-session'
@@ -19,31 +21,40 @@ export type KeyAction =
   | 'backspace'
   | 'text'
 
+/** Help-overlay group a binding is documented under. */
+export type KeyGroup = 'navigation' | 'composer' | 'sessions'
+
 export interface KeyBinding {
   readonly action: Exclude<KeyAction, 'text'>
   /** Footer help text; empty for bindings covered by a sibling's hint. */
   readonly hint: string
+  /** Help-overlay row text when the footer hint cannot carry the binding. */
+  readonly doc?: string
+  readonly group: KeyGroup
   readonly match: (ch: string, key: Key) => boolean
 }
 
 export const KEYBINDINGS: readonly KeyBinding[] = [
   // Newline precedes submit: shift+enter also sets key.return on terminals
   // that report it, and must not submit. Ctrl+J arrives as ch '\n'.
-  { action: 'newline', hint: 'ctrl+j newline', match: (ch, key) => ch === '\n' || (key.return && key.shift) },
-  { action: 'submit', hint: 'enter send/stop', match: (_ch, key) => key.return },
-  { action: 'interrupt', hint: 'esc stop/quit', match: (_ch, key) => key.escape },
-  { action: 'quit', hint: 'ctrl+c quit', match: (ch, key) => key.ctrl && ch.toLowerCase() === 'c' },
-  { action: 'toggle-sidebar', hint: 'tab sessions', match: (_ch, key) => key.tab },
-  { action: 'new-session', hint: 'ctrl+n new', match: (ch, key) => key.ctrl && ch.toLowerCase() === 'n' },
-  { action: 'delete-session', hint: 'ctrl+x delete', match: (ch, key) => key.ctrl && ch.toLowerCase() === 'x' },
+  { action: 'newline', hint: 'ctrl+j newline', group: 'composer', match: (ch, key) => ch === '\n' || (key.return && key.shift) },
+  { action: 'submit', hint: 'enter send/stop', group: 'composer', match: (_ch, key) => key.return },
+  { action: 'interrupt', hint: 'esc stop/quit', group: 'navigation', match: (_ch, key) => key.escape },
+  { action: 'quit', hint: 'ctrl+c quit', group: 'navigation', match: (ch, key) => key.ctrl && ch.toLowerCase() === 'c' },
+  // '?' opens the help screen only at an empty input (the controller decides);
+  // elsewhere it stays ordinary text.
+  { action: 'help', hint: '? help', group: 'navigation', match: (ch, key) => ch === '?' && !key.ctrl && !key.meta },
+  { action: 'toggle-sidebar', hint: 'tab sessions', group: 'sessions', match: (_ch, key) => key.tab },
+  { action: 'new-session', hint: 'ctrl+n new', group: 'sessions', match: (ch, key) => key.ctrl && ch.toLowerCase() === 'n' },
+  { action: 'delete-session', hint: 'ctrl+x delete', group: 'sessions', match: (ch, key) => key.ctrl && ch.toLowerCase() === 'x' },
   // Cycles focus through tool steps (newest first); the focused step renders
   // expanded with full arguments and result. Esc unfocuses before stopping.
-  { action: 'expand-focus', hint: 'ctrl+e expand tool', match: (ch, key) => key.ctrl && ch.toLowerCase() === 'e' },
-  { action: 'scroll-up', hint: '↑/↓ scroll', match: (_ch, key) => key.upArrow },
-  { action: 'scroll-down', hint: '', match: (_ch, key) => key.downArrow },
-  { action: 'page-up', hint: 'pgup/pgdn page', match: (_ch, key) => key.pageUp },
-  { action: 'page-down', hint: '', match: (_ch, key) => key.pageDown },
-  { action: 'backspace', hint: '', match: (_ch, key) => key.backspace || key.delete },
+  { action: 'expand-focus', hint: 'ctrl+e expand tool', group: 'navigation', match: (ch, key) => key.ctrl && ch.toLowerCase() === 'e' },
+  { action: 'scroll-up', hint: '↑/↓ scroll', group: 'navigation', match: (_ch, key) => key.upArrow },
+  { action: 'scroll-down', hint: '', group: 'navigation', match: (_ch, key) => key.downArrow },
+  { action: 'page-up', hint: 'pgup/pgdn page', group: 'navigation', match: (_ch, key) => key.pageUp },
+  { action: 'page-down', hint: '', group: 'navigation', match: (_ch, key) => key.pageDown },
+  { action: 'backspace', hint: '', doc: 'backspace delete', group: 'composer', match: (_ch, key) => key.backspace || key.delete },
 ]
 
 /**
@@ -71,7 +82,7 @@ export function matchKey(ch: string, key: Key): KeyAction | null {
 // settles the question 'cancelled', and the turn ends aborted, never error.
 export type ApprovalKeyAction = 'approve' | 'deny'
 
-/** Hint text rendered inside the approval banner. */
+/** Hint text rendered inside the approval banner and the help overlay. */
 export const APPROVAL_HINT = 'a approve once · d deny · esc stop'
 
 export const APPROVAL_KEYS: readonly { readonly action: ApprovalKeyAction; readonly match: (ch: string, key: Key) => boolean }[] = [

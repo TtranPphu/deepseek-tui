@@ -8,14 +8,20 @@ import { randomUUID } from 'node:crypto'
 import { useEffect, useRef, useState } from 'react'
 import type { JSX } from 'react'
 import { Box, Text, useApp, useInput, useStdout } from 'ink'
+import type { Key } from 'ink'
 import type { Agent, AgentHandle, AgentStatus, AssistantStreamFrame, CreateAgentOptions } from '@deepseek-ai/dsh-agent'
 import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-title'
 import type { SessionRecord, SessionTitleObservationResult } from '@deepseek-ai/dsh-session-query'
 import type { MessageId, UserMessage } from '@deepseek-ai/dsh-llm'
+import type { CommandDescriptor, CommandExecution } from '@deepseek-ai/dsh-commands'
 import type { ApprovalOutcome, ApprovalRequestEvent } from '@deepseek-ai/dsh-user-approval/types'
 import { matchApprovalKey, matchKey } from './keys.js'
-import { clampScroll, composerRows, transcriptViewport } from './scroll.js'
+import { clampScroll, clampTop, composerRows, transcriptViewport } from './scroll.js'
+import { commandLine, filterCommands, isFreshPosition, mergeCommands, palettePick } from './commands.js'
+import type { PaletteCommand } from './commands.js'
+import { helpSections, overlayLines } from './help.js'
+import type { HelpLine } from './help.js'
 import { applySessionEvent, createProjection, createStreamProjector, echoUser, findToolPart, nextFocusCallId, summarizeArgs, turnActivity } from './projection.js'
 import type { Projection, StreamProjector } from './projection.js'
 import { createApprovalQueue } from './approval.js'
@@ -23,8 +29,8 @@ import type { ApprovalDecision, ApprovalPrompt } from './approval.js'
 import { confirmationPrompt, isAlreadyDeleted, moveSelection, needsConfirmation, titlesFrom, toSidebarEntries } from './sessions.js'
 import type { PendingAction, SidebarEntry } from './sessions.js'
 import { theme } from './theme.js'
-import { APPROVAL_BANNER_ROWS, ApprovalBanner, Composer, Footer, Header, SIDEBAR_WIDTH, Sidebar, Transcript, renderLines } from './ui.js'
-import type { SessionInfo, SessionStatus } from './ui.js'
+import { APPROVAL_BANNER_ROWS, ApprovalBanner, Composer, CommandPalette, Footer, Header, HELP_CHROME_ROWS, HelpOverlay, PALETTE_MAX_ROWS, SIDEBAR_WIDTH, Sidebar, Transcript, renderLines } from './ui.js'
+import type { Notice, SessionInfo, SessionStatus } from './ui.js'
 
 /**
  * The harness I/O surface the controller uses. A plain facade of bound
@@ -38,6 +44,8 @@ export interface HarnessServices {
   list(): Promise<readonly SessionRecord[]>
   readTitles(ids: readonly SessionId[]): Promise<readonly SessionTitleObservationResult[]>
   deleteSession(id: SessionId): Promise<void>
+  listCommands(agent: Agent): readonly CommandDescriptor[]
+  executeCommand(agent: Agent, line: string, signal: AbortSignal): Promise<CommandExecution | undefined>
   on(event: 'session/event', listener: (session: Session, event: SessionEvent) => void): () => void
   on(event: 'agent/status', listener: (payload: { agent: Agent; status: AgentStatus }) => void): () => void
   on(event: 'agent/assistant-stream', listener: (payload: { agent: Agent; frame: AssistantStreamFrame }) => void): () => void
@@ -56,7 +64,7 @@ function errorMessage(error: unknown): string {
 export function App({ services, onDone }: { services: HarnessServices; onDone: () => void }): JSX.Element {
   const { exit } = useApp()
   const { stdout } = useStdout()
-  const [notices, setNotices] = useState<string[]>([])
+  const [notices, setNotices] = useState<Notice[]>([])
   const [, setTick] = useState(0)
   const [input, setInput] = useState('')
   const [scroll, setScroll] = useState(0)
@@ -69,6 +77,18 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
   const [pending, setPending] = useState<PendingAction | null>(null)
   const [approvalHead, setApprovalHead] = useState<ApprovalPrompt | null>(null)
   const [focusedCallId, setFocusedCallId] = useState<string | null>(null)
+  // Slash-command palette: query, selection, and the roster it filters.
+  const [paletteOpen, setPaletteOpen] = useState(false)
+  const [paletteQuery, setPaletteQuery] = useState('/')
+  const [paletteIndex, setPaletteIndex] = useState(0)
+  const [commands, setCommands] = useState<readonly PaletteCommand[]>(() => mergeCommands([]))
+  // Help overlay: open state, the projected lines, and the scroll position.
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [helpLines, setHelpLines] = useState<readonly HelpLine[]>([])
+  const [helpTop, setHelpTop] = useState(0)
+  // A harness slash command executing without a turn (e.g. /compact).
+  const [busyCommand, setBusyCommand] = useState<string | null>(null)
+  const commandAbortRef = useRef<AbortController | null>(null)
   // Resize re-render: Ink redraws on its own, but the viewport math reads
   // stdout.rows/columns, so track them as state to guarantee a relayout.
   // `||` catches 0: a degenerate pty (script, CI) reports 0x0 and would
@@ -93,7 +113,9 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
   projectionRef.current ??= createProjection()
   streamRef.current ??= createStreamProjector(projectionRef.current)
   const bump = (): void => setTick((tick) => tick + 1)
-  const notify = (text: string): void => setNotices((prev) => [...prev, text])
+  const notify = (text: string, error = false): void => {
+    setNotices((prev) => [...prev, { text, ...error ? { error: true } : {} }])
+  }
 
   // Approval state transitions: the queue in approval.ts owns ordering; these
   // settle the paired harness promise and republish the head to the renderer.
@@ -135,6 +157,126 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
       })
     } catch (error) {
       notify(`session list failed: ${errorMessage(error)}`)
+    }
+  }
+
+  /** The merged harness + local roster for the active agent. */
+  const currentRoster = (): readonly PaletteCommand[] => {
+    const agent = agentRef.current
+    if (agent === null) return mergeCommands([])
+    try {
+      return mergeCommands(servicesRef.current.listCommands(agent))
+    } catch (error) {
+      notify(`command list failed: ${errorMessage(error)}`, true)
+      return mergeCommands([])
+    }
+  }
+
+  const openHelp = (): void => {
+    setHelpLines(overlayLines(helpSections(currentRoster())))
+    setHelpTop(0)
+    setHelpOpen(true)
+  }
+
+  const openPalette = (): void => {
+    setCommands(currentRoster())
+    setPaletteQuery('/')
+    setPaletteIndex(0)
+    setPaletteOpen(true)
+  }
+
+  const closePalette = (): void => setPaletteOpen(false)
+
+  /**
+   * Run one palette command. Local rows are UI actions; harness rows execute
+   * through ctx.commands.execute against the active agent and surface the
+   * handler's own result text as a transcript notice.
+   */
+  const runSlashCommand = async (command: PaletteCommand, args: string): Promise<void> => {
+    if (command.source === 'local') {
+      if (command.id === 'sessions') {
+        if (!sidebarOpen) setSidebarOpen(true)
+        void refreshSessions()
+        return
+      }
+      openHelp()
+      return
+    }
+    const agent = agentRef.current
+    if (agent === null) {
+      notify(`no session yet — /${command.name} needs the active session`, true)
+      return
+    }
+    const controller = new AbortController()
+    commandAbortRef.current = controller
+    setBusyCommand(command.name)
+    try {
+      const execution = await servicesRef.current.executeCommand(agent, commandLine(command.name, args), controller.signal)
+      const result = execution?.result
+      if (result?.kind === 'success') {
+        if (result.text !== undefined) notify(result.text)
+      } else if (result?.kind === 'error') {
+        notify(result.text, true)
+      } else {
+        notify(`/${command.name} is not available in this session`, true)
+      }
+    } catch (error) {
+      // Unmount aborts the in-flight command for exit; the app is gone by the
+      // time the rejection lands, so no notice may reach it.
+      if (unmountedRef.current) return
+      if (controller.signal.aborted) notify(`/${command.name} cancelled`)
+      else notify(`/${command.name} failed: ${errorMessage(error)}`, true)
+    } finally {
+      commandAbortRef.current = null
+      if (!unmountedRef.current) setBusyCommand(null)
+    }
+  }
+
+  /** Enter in the palette: the armed command wins, else the highlighted row. */
+  const runPaletteSelection = (): void => {
+    const pick = palettePick(commands, paletteQuery.slice(1), paletteIndex)
+    closePalette()
+    if (pick === undefined) return
+    void runSlashCommand(pick.command, pick.args)
+  }
+
+  const movePaletteSelection = (delta: number): void => {
+    const matches = filterCommands(commands, paletteQuery.slice(1))
+    setPaletteIndex((current) => moveSelection(current < 0 ? 0 : current, delta, matches.length))
+  }
+
+  /** Keys while the palette owns the composer slot. */
+  const handlePaletteKey = (ch: string, key: Key): void => {
+    switch (matchKey(ch, key)) {
+      case 'quit':
+        exit()
+        return
+      case 'submit':
+        runPaletteSelection()
+        return
+      case 'interrupt':
+        closePalette()
+        return
+      case 'scroll-up':
+      case 'page-up':
+        movePaletteSelection(-1)
+        return
+      case 'scroll-down':
+      case 'page-down':
+        movePaletteSelection(1)
+        return
+      case 'backspace':
+        if (paletteQuery === '/') closePalette()
+        else setPaletteQuery((query) => query.slice(0, -1))
+        setPaletteIndex(0)
+        return
+      case 'help':
+      case 'text':
+        setPaletteQuery((query) => query + ch)
+        setPaletteIndex(0)
+        return
+      default:
+        return
     }
   }
 
@@ -262,6 +404,10 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
   }
 
   const requestAction = (action: PendingAction): void => {
+    if (busyCommand !== null) {
+      notify(`/${busyCommand} is running — wait for it or press esc to cancel`)
+      return
+    }
     if (needsConfirmation(action, status === 'running')) {
       setPending(action)
       return
@@ -293,6 +439,7 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
     return () => {
       unmountedRef.current = true
       openGenerationRef.current += 1
+      commandAbortRef.current?.abort()
       for (const dispose of sessionDisposersRef.current.splice(0)) dispose()
       const handle = handleRef.current
       handleRef.current = null
@@ -306,21 +453,27 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
   }, [])
 
   useEffect(() => {
-    if (status !== 'running') return
+    if (status !== 'running' && busyCommand === null) return
     const timer = setInterval(() => setSpinner((frame) => (frame + 1) % SPINNER_FRAMES.length), 80)
     return () => {
       clearInterval(timer)
     }
-  }, [status])
+  }, [status, busyCommand])
 
   const mainCols = sidebarOpen ? Math.max(20, size.cols - SIDEBAR_WIDTH) : size.cols
-  const composerLineCount = composerRows(input, mainCols)
+  const paletteMatches = paletteOpen ? filterCommands(commands, paletteQuery.slice(1)) : []
+  // The palette owns the composer slot while open: one query row plus the
+  // match list (an empty list still shows one no-match row).
+  const bottomRows = paletteOpen
+    ? 1 + (paletteMatches.length === 0 ? 1 : Math.min(paletteMatches.length, PALETTE_MAX_ROWS))
+    : composerRows(input, mainCols)
   const viewport = Math.max(
     1,
-    transcriptViewport(size.rows, composerLineCount)
+    transcriptViewport(size.rows, bottomRows)
       - (pending === null ? 0 : 1)
       - (approvalHead === null ? 0 : APPROVAL_BANNER_ROWS),
   )
+  const helpViewportRows = Math.max(1, size.rows - HELP_CHROME_ROWS)
   const spinnerGlyph = SPINNER_FRAMES[spinner] ?? '⠋'
   const projection = projectionRef.current
   const approvalTool = approvalHead?.callId !== undefined && projection ? findToolPart(projection, approvalHead.callId) : null
@@ -350,8 +503,43 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
         return
       }
     }
+    // The help overlay owns every key except closing and quitting; composer
+    // text and controller state stay untouched underneath it.
+    if (helpOpen) {
+      switch (matchKey(ch, key)) {
+        case 'quit':
+          exit()
+          return
+        case 'interrupt':
+        case 'help':
+          setHelpOpen(false)
+          return
+        case 'scroll-up':
+          setHelpTop((top) => clampTop(top - 1, helpLines.length, helpViewportRows))
+          return
+        case 'scroll-down':
+          setHelpTop((top) => clampTop(top + 1, helpLines.length, helpViewportRows))
+          return
+        case 'page-up':
+          setHelpTop((top) => clampTop(top - helpViewportRows, helpLines.length, helpViewportRows))
+          return
+        case 'page-down':
+          setHelpTop((top) => clampTop(top + helpViewportRows, helpLines.length, helpViewportRows))
+          return
+        default:
+          return
+      }
+    }
+    if (paletteOpen) {
+      handlePaletteKey(ch, key)
+      return
+    }
     switch (matchKey(ch, key)) {
       case 'submit': {
+        if (busyCommand !== null) {
+          notify(`/${busyCommand} is running — wait for it or press esc to cancel`)
+          return
+        }
         if (pending !== null) {
           const action = pending
           setPending(null)
@@ -403,6 +591,11 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
         setInput((prev) => prev + '\n')
         return
       case 'interrupt': {
+        // Esc cancels a running slash command (its signal aborts the handler).
+        if (busyCommand !== null) {
+          commandAbortRef.current?.abort()
+          return
+        }
         if (pending !== null) {
           setPending(null)
           return
@@ -473,13 +666,34 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
       case 'backspace':
         setInput((prev) => prev.slice(0, -1))
         return
-      case 'text':
+      // '?' opens help at an empty input; mid-text it stays a plain character.
+      case 'help':
+        if (input === '' && pending === null && approvalHead === null) {
+          openHelp()
+          return
+        }
+        setInput((prev) => prev + '?')
+        return
+      case 'text': {
+        // A fresh '/' while idle opens the command palette instead of typing.
+        if (
+          ch === '/' && isFreshPosition(input) && status === 'idle'
+          && pending === null && approvalHead === null && busyCommand === null
+        ) {
+          openPalette()
+          return
+        }
         setInput((prev) => prev + ch)
         return
+      }
       case null:
         return
     }
   })
+
+  if (helpOpen) {
+    return <HelpOverlay lines={helpLines} top={helpTop} rows={size.rows} cols={size.cols} />
+  }
 
   return (
     <Box flexDirection="row" height={size.rows}>
@@ -507,8 +721,13 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
           activity={projection ? turnActivity(projection) : null}
           awaitingApproval={approvalHead !== null}
           spinner={spinnerGlyph}
+          busyCommand={busyCommand}
         />
-        <Composer input={input} busy={status === 'running'} />
+        {paletteOpen ? (
+          <CommandPalette query={paletteQuery} commands={paletteMatches} selected={paletteIndex} cols={mainCols} />
+        ) : (
+          <Composer input={input} busy={status === 'running' || busyCommand !== null} />
+        )}
       </Box>
     </Box>
   )
