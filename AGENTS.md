@@ -14,9 +14,11 @@ deepseek-tui is an opencode-like interactive terminal UI that boots *inside* a D
 
 ```
 cordis.patch.yml      bundle patch rows (plugin id/name) applied over the base layer
+scripts/smoke.mjs     PTY smoke: boots dsh --profile tui in a scratch home and drives it
 src/index.tsx         plugin entry: alt-screen setup/restore, Ink render, exit funnel
 src/app.tsx           app controller: session lifecycle, event subscriptions, key dispatch
 src/projection.ts     pure session-event/stream-frame → turn view model fold + tool display helpers
+src/transcript.ts     pure cached transcript row model: per-turn line cache, window slice
 src/approval.ts       pure approval-prompt queue (pending → granted/rejected/cancelled)
 src/sessions.ts       pure sidebar list model: entries, selection, confirm policy
 src/ui.tsx            dumb view components (header, sidebar, transcript, approval banner, footer, composer)
@@ -24,6 +26,8 @@ src/theme.ts          typed color/border tokens; the only source of styling lite
 src/keys.ts           KEYBINDINGS table + matchKey + matchApprovalKey; the single source for key handling
 src/scroll.ts         pure layout math (scroll window, composer/viewport sizing, wrap)
 src/projection.test.ts vitest spec for the event → view projection
+src/transcript.test.ts vitest spec for the row model (golden rows, window semantics)
+src/performance.test.ts prints long-session fold/refresh timings (windowed model)
 src/approval.test.ts  vitest spec for the approval queue machine
 src/sessions.test.ts  vitest spec for the sidebar list model
 src/shell.test.ts     vitest spec for the key table and layout math
@@ -36,7 +40,17 @@ pnpm install            # node >=22, pnpm; esbuild build approved via allowBuild
 pnpm typecheck          # tsc --noEmit
 pnpm build              # tsc emit to lib/ (lib/index.js + lib/index.d.ts)
 pnpm test               # vitest run (pure key/layout logic only)
+pnpm smoke              # boot dsh --profile tui in a scratch PTY and drive a scripted interaction
 pnpm clean              # remove lib/ and *.tsbuildinfo
+```
+
+`pnpm smoke` runs the profile exactly as a dev boot does, so the profile's
+`node_modules/deepseek-tui` bundle must match this checkout — the script
+fails loudly with refresh instructions when it does not:
+
+```sh
+cd ~/.dsh/profiles/tui
+rm -rf node_modules/deepseek-tui && pnpm update deepseek-tui --latest   # refresh after repo builds
 ```
 
 There is no standalone dev entry — run the plugin through a profile:
