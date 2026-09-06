@@ -30,6 +30,7 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "smoke": "node scripts/smoke.mjs",
     "clean": "rm -rf lib *.tsbuildinfo"
   },
   "engines": {
