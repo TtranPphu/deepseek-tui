@@ -39,6 +39,12 @@ export const KEYBINDINGS: readonly KeyBinding[] = [
   // that report it, and must not submit. Ctrl+J arrives as ch '\n'.
   { action: 'newline', hint: 'ctrl+j newline', group: 'composer', match: (ch, key) => ch === '\n' || (key.return && key.shift) },
   { action: 'submit', hint: 'enter send/stop', group: 'composer', match: (_ch, key) => key.return },
+  // Esc is a deliberate multi-press ladder, not a race: it stops the running
+  // turn first, then collapses the expand focus, then the sidebar, then exits.
+  // A double-Esc meant as "stop and quit" can land its second press while the
+  // cancel is still in flight (status has not flipped yet), so it is consumed
+  // as another stop instead of the next ladder rung — press Esc again once the
+  // turn visibly ends. Documented here so the ladder stays the single source.
   { action: 'interrupt', hint: 'esc stop/quit', group: 'navigation', match: (_ch, key) => key.escape },
   { action: 'quit', hint: 'ctrl+c quit', group: 'navigation', match: (ch, key) => key.ctrl && ch.toLowerCase() === 'c' },
   // '?' opens the help screen only at an empty input (the controller decides);

@@ -1,16 +1,16 @@
 // Dumb view components: projection in, JSX out. All transitions live in
-// app.tsx's controller; colors and borders come only from theme tokens.
-// `turnLines` flattens the turn view model into one row per terminal line so
-// the scroll window math stays exact — wrapping happens here, not in Ink.
+// app.tsx's controller; colors and borders come only from theme tokens. Row
+// flattening and the transcript window live in transcript.ts — the app hands
+// each component its exact lines.
 import { Box, Text } from 'ink'
 import type { JSX } from 'react'
 import { theme } from './theme.js'
 import { APPROVAL_HINT, KEYBINDINGS } from './keys.js'
-import { clampScroll, scrollWindow, topWindow, wrapText } from './scroll.js'
+import { topWindow } from './scroll.js'
 import { relativeTime, visibleStart } from './sessions.js'
 import type { SidebarEntry } from './sessions.js'
-import { displayToolName, summarizeArgs } from './projection.js'
-import type { Projection, ToolPart, TurnPart, TurnView } from './projection.js'
+import { displayToolName } from './projection.js'
+import type { RenderLine } from './transcript.js'
 import type { ApprovalPrompt } from './approval.js'
 import type { HelpLine } from './help.js'
 import type { PaletteCommand } from './commands.js'
@@ -24,126 +24,6 @@ export interface SessionInfo {
   readonly title?: string | undefined
   /** Durable session workspace; the live session's own cwd wins over this boot's. */
   readonly cwd?: string | undefined
-}
-
-export interface RenderLine {
-  readonly kind: 'user' | 'assistant' | 'tool' | 'result' | 'error' | 'sys'
-  readonly text: string
-  readonly spinner?: boolean
-  /** Header tone override: error cross, amber approval marker, accent focus. */
-  readonly tone?: 'error' | 'warn' | 'accent'
-}
-
-/** Transient render focus: the ctrl+e-expanded step and the approval-blocked call. */
-export interface TranscriptView {
-  readonly focusedCallId: string | null
-  readonly approvalCallId: string | null
-}
-
-/** One controller notice; errors render in the error tone. */
-export interface Notice {
-  readonly text: string
-  readonly error?: boolean
-}
-
-const RESULT_PREVIEW_LINES = 2
-
-function formatDuration(ms: number): string {
-  return ms < 1000 ? `${String(ms)}ms` : `${(ms / 1000).toFixed(1)}s`
-}
-
-function toolGlyph(part: ToolPart, spinner: string): string {
-  switch (part.status) {
-    case 'running': return spinner
-    case 'done': return '✓'
-    case 'error': return '✗'
-    case 'aborted': return '■'
-  }
-}
-
-/** One tool step as a compact bordered block with a left rail. */
-function toolLines(part: ToolPart, cols: number, spinner: string, view: TranscriptView): RenderLine[] {
-  const focused = view.focusedCallId === part.callId
-  const awaiting = view.approvalCallId === part.callId
-  const duration = part.durationMs === undefined ? '' : ` ${formatDuration(part.durationMs)}`
-  const marker = awaiting ? ' ▲ approval' : ''
-  const header: RenderLine = {
-    kind: 'tool',
-    text: `╭─ ${displayToolName(part.name)} · ${summarizeArgs(part.args)} ${toolGlyph(part, spinner)}${duration}${marker}`,
-    spinner: part.status === 'running',
-    tone: part.status === 'error' ? 'error' : awaiting ? 'warn' : focused ? 'accent' : undefined,
-  }
-  const lines: RenderLine[] = [header]
-  // Running and aborted steps stay header-only: no result exists yet, and an
-  // aborted one carries only the harness's internal abort notice, not output.
-  if (part.status === 'running' || part.status === 'aborted') return lines
-  const railWidth = Math.max(8, cols - 4)
-  if (focused) {
-    for (const argLine of part.args.split('\n')) {
-      for (const wrapped of wrapText(argLine, railWidth)) lines.push({ kind: 'result', text: `│ ${wrapped}` })
-    }
-    for (const resultLine of part.result.split('\n')) {
-      for (const wrapped of wrapText(resultLine, railWidth)) lines.push({ kind: 'result', text: `│ ${wrapped}` })
-    }
-    lines.push({ kind: 'result', text: '╰─ ctrl+e collapse' })
-    return lines
-  }
-  if (part.result !== '') {
-    const resultLines = part.result.split('\n')
-    for (const line of resultLines.slice(0, RESULT_PREVIEW_LINES)) lines.push({ kind: 'result', text: `│ ${line}` })
-    if (resultLines.length > RESULT_PREVIEW_LINES) {
-      lines.push({ kind: 'result', text: `╰─ … +${String(resultLines.length - RESULT_PREVIEW_LINES)} lines · ctrl+e expand` })
-    } else {
-      lines.push({ kind: 'result', text: '╰─' })
-    }
-  }
-  return lines
-}
-
-function partLines(part: TurnPart, cols: number, spinner: string, view: TranscriptView): RenderLine[] {
-  if (part.kind === 'tool') return toolLines(part, cols, spinner, view)
-  const out: RenderLine[] = []
-  for (const paragraph of part.text.split('\n')) {
-    for (const line of wrapText(paragraph, cols)) out.push({ kind: 'assistant', text: line })
-  }
-  if (part.streaming) {
-    const last = out.pop()
-    out.push({ kind: 'assistant', text: `${last?.text ?? ''}▌` })
-  }
-  return out
-}
-
-function turnLines(turn: TurnView, cols: number, spinner: string, view: TranscriptView): RenderLine[] {
-  const lines: RenderLine[] = []
-  if (turn.user !== '') {
-    for (const [i, line] of turn.user.split('\n').entries()) {
-      const prefix = i === 0 ? '❯ ' : '  '
-      for (const wrapped of wrapText(prefix + line, cols)) lines.push({ kind: 'user', text: wrapped })
-    }
-  }
-  for (const part of turn.parts) lines.push(...partLines(part, cols, spinner, view))
-  if (turn.status === 'error') lines.push({ kind: 'error', text: `✗ ${turn.error ?? 'turn failed'}` })
-  else if (turn.status === 'aborted') lines.push({ kind: 'sys', text: '■ stopped' })
-  return lines
-}
-
-/**
- * Flatten the projection into display rows: turns first, then notices at the
- * tail so a fresh notice sits in the default tail-pinned view.
- */
-export function renderLines(
-  notices: readonly Notice[],
-  projection: Projection,
-  cols: number,
-  spinner: string,
-  view: TranscriptView = { focusedCallId: null, approvalCallId: null },
-): RenderLine[] {
-  const lines: RenderLine[] = []
-  for (const turn of projection.turns) lines.push(...turnLines(turn, cols, spinner, view))
-  for (const notice of notices) {
-    lines.push({ kind: 'sys', text: notice.text, ...notice.error === true ? { tone: 'error' } : {} })
-  }
-  return lines
 }
 
 /**
@@ -340,11 +220,15 @@ function LineRow({ line }: { line: RenderLine }): JSX.Element {
   }
 }
 
-export function Transcript({ lines, viewport, scroll }: { lines: readonly RenderLine[]; viewport: number; scroll: number }): JSX.Element {
-  const visible = scrollWindow(lines, viewport, scroll)
+/**
+ * The transcript pane: the controller's exact window rows bottom-aligned in a
+ * viewport-height column. The app slices (see transcript.ts); this component
+ * never scrolls or flattens on its own.
+ */
+export function Transcript({ lines, viewport }: { lines: readonly RenderLine[]; viewport: number }): JSX.Element {
   return (
     <Box flexDirection="column" height={viewport} justifyContent="flex-end">
-      {visible.map((line, index) => (
+      {lines.map((line, index) => (
         <LineRow key={index} line={line} />
       ))}
     </Box>
@@ -370,6 +254,16 @@ export function ApprovalBanner({ prompt, command }: { prompt: ApprovalPrompt; co
   )
 }
 
+/** The keys the footer hints about change with the input surface. */
+export type FooterMode = 'chat' | 'palette' | 'confirm'
+
+/** Footer hint text per mode; chat shows the full KEYBINDINGS table. */
+const MODE_HINTS: Record<FooterMode, string> = {
+  chat: KEYBINDINGS.filter((binding) => binding.hint).map((binding) => binding.hint).join(' · '),
+  palette: 'enter runs · esc closes · ↑/↓ pick · typing filters',
+  confirm: 'enter confirms · esc cancels',
+}
+
 interface FooterProps {
   readonly status: SessionStatus
   readonly scroll: number
@@ -379,10 +273,11 @@ interface FooterProps {
   readonly spinner: string
   /** Running slash command name; overrides the working state while it runs. */
   readonly busyCommand: string | null
+  /** Which surface owns Enter/Esc right now: chat, the palette, or a confirm. */
+  readonly mode: FooterMode
 }
 
-export function Footer({ status, scroll, activity, awaitingApproval, spinner, busyCommand }: FooterProps): JSX.Element {
-  const hints = KEYBINDINGS.filter((binding) => binding.hint).map((binding) => binding.hint).join(' · ')
+export function Footer({ status, scroll, activity, awaitingApproval, spinner, busyCommand, mode }: FooterProps): JSX.Element {
   const working = busyCommand !== null
     ? `${spinner} running /${busyCommand}`
     : awaitingApproval
@@ -395,7 +290,9 @@ export function Footer({ status, scroll, activity, awaitingApproval, spinner, bu
   const state = scroll > 0 ? `${working} · ↑${scroll} more` : working
   return (
     <Box justifyContent="space-between" width="100%">
-      <Text color={theme.colors.muted} wrap="truncate-end">{hints}</Text>
+      {/* The palette and confirm prompts take Enter/Esc away from the composer,
+          so their modes replace the chat hints instead of lying about them. */}
+      <Text color={theme.colors.muted} wrap="truncate-end">{MODE_HINTS[mode]}</Text>
       {/* truncate-end on both halves: a wrapping footer breaks the exact row math of the column above it. */}
       <Text color={theme.colors.muted} wrap="truncate-end">{state}</Text>
     </Box>
@@ -403,9 +300,11 @@ export function Footer({ status, scroll, activity, awaitingApproval, spinner, bu
 }
 
 const PLACEHOLDER = 'ask anything… · type / for commands'
+const FAILED_PLACEHOLDER = 'session unavailable — ctrl+n starts a new one'
 
-export function Composer({ input, busy }: { input: string; busy: boolean }): JSX.Element {
+export function Composer({ input, busy, failed }: { input: string; busy: boolean; failed: boolean }): JSX.Element {
   const lines = input.split('\n')
+  const placeholder = failed ? FAILED_PLACEHOLDER : PLACEHOLDER
   return (
     <Box
       borderStyle={theme.borders.composer}
@@ -416,7 +315,7 @@ export function Composer({ input, busy }: { input: string; busy: boolean }): JSX
       {input === '' ? (
         <Text>
           <Text color={theme.colors.accent}>{'❯ '}</Text>
-          <Text color={theme.colors.muted}>{PLACEHOLDER}</Text>
+          <Text color={theme.colors.muted}>{placeholder}</Text>
           <Text color={theme.colors.cursor}>▌</Text>
         </Text>
       ) : (

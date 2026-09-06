@@ -24,14 +24,17 @@ import { helpSections, overlayLines } from './help.js'
 import type { HelpLine } from './help.js'
 import { applySessionEvent, createProjection, createStreamProjector, echoUser, findToolPart, nextFocusCallId, summarizeArgs, turnActivity } from './projection.js'
 import type { Projection, StreamProjector } from './projection.js'
+import { createTranscriptModel } from './transcript.js'
+import type { TranscriptModel } from './transcript.js'
 import { createApprovalQueue } from './approval.js'
 import type { ApprovalDecision, ApprovalPrompt } from './approval.js'
 import { confirmationPrompt, isAlreadyDeleted, moveSelection, needsConfirmation, titlesFrom, toSidebarEntries } from './sessions.js'
 import type { PendingAction, SidebarEntry } from './sessions.js'
 import type { TuiStartupService } from './startup.js'
 import { theme } from './theme.js'
-import { APPROVAL_BANNER_ROWS, ApprovalBanner, Composer, CommandPalette, Footer, Header, HELP_CHROME_ROWS, HelpOverlay, PALETTE_MAX_ROWS, SIDEBAR_WIDTH, Sidebar, Transcript, renderLines } from './ui.js'
-import type { Notice, SessionInfo, SessionStatus } from './ui.js'
+import { APPROVAL_BANNER_ROWS, ApprovalBanner, Composer, CommandPalette, Footer, Header, HELP_CHROME_ROWS, HelpOverlay, PALETTE_MAX_ROWS, SIDEBAR_WIDTH, Sidebar, Transcript } from './ui.js'
+import type { SessionInfo, SessionStatus } from './ui.js'
+import type { Notice } from './transcript.js'
 
 /**
  * The harness I/O surface the controller uses. A plain facade of bound
@@ -114,6 +117,8 @@ export function App({ services, startup, onDone }: { services: HarnessServices; 
   const sessionDisposersRef = useRef<(() => void)[]>([])
   const projectionRef = useRef<Projection | null>(null)
   const streamRef = useRef<StreamProjector | null>(null)
+  // The cached transcript view model rides the projection: reset together.
+  const transcriptRef = useRef<TranscriptModel | null>(null)
   const approvalQueueRef = useRef(createApprovalQueue())
   // Each queued prompt pairs with the resolver of the promise the answerer
   // returned to the harness waterfall.
@@ -128,6 +133,7 @@ export function App({ services, startup, onDone }: { services: HarnessServices; 
   const unmountedRef = useRef(false)
   projectionRef.current ??= createProjection()
   streamRef.current ??= createStreamProjector(projectionRef.current)
+  transcriptRef.current ??= createTranscriptModel()
   const bump = (): void => setTick((tick) => tick + 1)
   const notify = (text: string, error = false): void => {
     setNotices((prev) => [...prev, { text, ...error ? { error: true } : {} }])
@@ -316,11 +322,16 @@ export function App({ services, startup, onDone }: { services: HarnessServices; 
     agentRef.current = null
     projectionRef.current = createProjection()
     streamRef.current = createStreamProjector(projectionRef.current)
+    transcriptRef.current = createTranscriptModel()
+    lineCountRef.current = 0
     cancelAllApprovals()
     setPending(null)
     setFocusedCallId(null)
     setNotices([])
     setScroll(0)
+    // A switch starts a clean slate: text drafted for the old session must
+    // not ride along and get submitted to the new one.
+    setInput('')
     setSession(null)
     setStatus('connecting')
     bump()
@@ -545,22 +556,34 @@ export function App({ services, startup, onDone }: { services: HarnessServices; 
   const spinnerGlyph = SPINNER_FRAMES[spinner] ?? '⠋'
   const projection = projectionRef.current
   const approvalTool = approvalHead?.callId !== undefined && projection ? findToolPart(projection, approvalHead.callId) : null
-  const lines = renderLines(notices, projection, mainCols, spinnerGlyph, {
-    focusedCallId,
-    approvalCallId: approvalHead?.callId ?? null,
-  })
+  // Fold this frame's state into the cached transcript model, then slice the
+  // visible window. refresh() re-flattens only the live tail turn; frozen
+  // turns hit their row cache (transcript.ts), so per-frame cost stays
+  // bounded by the window and the session's age only in cheap cache lookups.
+  const transcript = transcriptRef.current
+  if (transcript !== null && projection !== null) {
+    transcript.refresh({
+      notices,
+      projection,
+      cols: mainCols,
+      spinner: spinnerGlyph,
+      view: { focusedCallId, approvalCallId: approvalHead?.callId ?? null },
+    })
+  }
+  const total = transcript?.length ?? 0
+  const lines = transcript?.visible(viewport, scroll) ?? []
 
   // Autoscroll is the default (offset 0 pins to the tail); once the user
   // scrolls up, grow their from-bottom offset with new content so the reading
   // position stays put until they scroll back down.
-  const lineCountRef = useRef(lines.length)
+  const lineCountRef = useRef(total)
   useEffect(() => {
     const previous = lineCountRef.current
-    lineCountRef.current = lines.length
-    if (scroll > 0 && lines.length > previous) {
-      setScroll(clampScroll(scroll + (lines.length - previous), lines.length, viewport))
+    lineCountRef.current = total
+    if (scroll > 0 && total > previous) {
+      setScroll(clampScroll(scroll + (total - previous), total, viewport))
     }
-  }, [lines.length, scroll, viewport])
+  }, [total, scroll, viewport])
 
   useInput((ch, key) => {
     // While an approval pends, its decision keys win over composer text.
@@ -716,20 +739,20 @@ export function App({ services, startup, onDone }: { services: HarnessServices; 
           moveSidebarSelection(-1)
           return
         }
-        setScroll((prev) => clampScroll(prev + 1, lines.length, viewport))
+        setScroll((prev) => clampScroll(prev + 1, total, viewport))
         return
       case 'scroll-down':
         if (sidebarOpen) {
           moveSidebarSelection(1)
           return
         }
-        setScroll((prev) => clampScroll(prev - 1, lines.length, viewport))
+        setScroll((prev) => clampScroll(prev - 1, total, viewport))
         return
       case 'page-up':
-        setScroll((prev) => clampScroll(prev + viewport - 1, lines.length, viewport))
+        setScroll((prev) => clampScroll(prev + viewport - 1, total, viewport))
         return
       case 'page-down':
-        setScroll((prev) => clampScroll(prev - (viewport - 1), lines.length, viewport))
+        setScroll((prev) => clampScroll(prev - (viewport - 1), total, viewport))
         return
       case 'backspace':
         setInput((prev) => prev.slice(0, -1))
@@ -776,7 +799,7 @@ export function App({ services, startup, onDone }: { services: HarnessServices; 
       ) : null}
       <Box flexDirection="column" width={mainCols}>
         <Header session={session} cols={mainCols} />
-        <Transcript lines={lines} viewport={viewport} scroll={scroll} />
+        <Transcript lines={lines} viewport={viewport} />
         {approvalHead !== null ? (
           <ApprovalBanner prompt={approvalHead} command={approvalTool === null ? null : summarizeArgs(approvalTool.args)} />
         ) : null}
@@ -790,11 +813,12 @@ export function App({ services, startup, onDone }: { services: HarnessServices; 
           awaitingApproval={approvalHead !== null}
           spinner={spinnerGlyph}
           busyCommand={busyCommand}
+          mode={paletteOpen ? 'palette' : pending !== null ? 'confirm' : 'chat'}
         />
         {paletteOpen ? (
           <CommandPalette query={paletteQuery} commands={paletteMatches} selected={paletteIndex} cols={mainCols} />
         ) : (
-          <Composer input={input} busy={status === 'running' || busyCommand !== null} />
+          <Composer input={input} busy={status === 'running' || busyCommand !== null} failed={status === 'failed'} />
         )}
       </Box>
     </Box>
