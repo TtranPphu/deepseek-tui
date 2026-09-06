@@ -18,7 +18,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const harnessRoot = resolve(repoRoot, '..', 'deepseek-harness')
+const harnessRoot = resolve(repoRoot, '..', 'harness')
 const homeDir = process.env.HOME ?? ''
 const profileDir = join(homeDir, '.dsh', 'profiles', 'tui')
 const bundleDir = join(profileDir, 'node_modules', 'deepseek-tui')

@@ -1,6 +1,6 @@
 # AGENTS.md
 
-deepseek-tui is an opencode-like interactive terminal UI that boots *inside* a DeepSeek Harness profile as an in-process Cordis plugin bundle — the same shape as `dsh-oc-tui`/`dsh-tui`. The harness (sibling repo `../deepseek-harness`) owns the agent loop, sessions, tools, and provider access; this package is a terminal frontend that opens sessions, sends followups, and renders the session events it receives over the harness's own event bus. Repo work here is mostly delegated to sub agents; this file is the shared contract they follow.
+deepseek-tui is an opencode-like interactive terminal UI that boots *inside* a DeepSeek Harness profile as an in-process Cordis plugin bundle — the same shape as `dsh-oc-tui`/`dsh-tui`. The harness (sibling repo `../harness`) owns the agent loop, sessions, tools, and provider access; this package is a terminal frontend that opens sessions, sends followups, and renders the session events it receives over the harness's own event bus. Repo work here is mostly delegated to sub agents; this file is the shared contract they follow.
 
 ## How this app plugs into the harness
 
@@ -56,7 +56,7 @@ rm -rf node_modules/deepseek-tui && pnpm update deepseek-tui --latest   # refres
 There is no standalone dev entry — run the plugin through a profile:
 
 ```sh
-pnpm --dir ~/Projects/deepseek/deepseek-harness dsh --profile tui   # boot the tui profile (dev, from source)
+pnpm --dir ~/Projects/deepseek/harness dsh --profile tui   # boot the tui profile (dev, from source)
 ```
 
 ## Conventions
