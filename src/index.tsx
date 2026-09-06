@@ -9,6 +9,7 @@ import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-agent-default-model'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type {} from '@deepseek-ai/dsh-session-query'
+import type {} from '@deepseek-ai/dsh-user-approval'
 import { App } from './app.js'
 import type { HarnessServices } from './app.js'
 
@@ -57,6 +58,9 @@ export function apply(ctx: Context): void {
         dispose()
       }
     },
+    // Answering approvals makes this plugin the profile's interactive
+    // answerer; the harness fails closed ('unavailable') without one.
+    onApproval: (listener) => ctx.on('approval/request', listener),
   }
   const instance = render(<App services={services} onDone={exitProcess} />)
   // Exit funnels through App's onDone: its unmount cleanup awaits the agent

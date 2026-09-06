@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Key } from 'ink'
-import { KEYBINDINGS, matchKey } from './keys.js'
+import { KEYBINDINGS, matchApprovalKey, matchKey } from './keys.js'
 import { clampScroll, composerRows, scrollWindow, transcriptViewport, wrapText } from './scroll.js'
 
 function key(overrides: Partial<Key> = {}): Key {
@@ -37,7 +37,20 @@ describe('matchKey', () => {
     expect(matchKey('\t', key({ tab: true }))).toBe('toggle-sidebar')
     expect(matchKey('n', key({ ctrl: true }))).toBe('new-session')
     expect(matchKey('x', key({ ctrl: true }))).toBe('delete-session')
+    expect(matchKey('e', key({ ctrl: true }))).toBe('expand-focus')
     expect(matchKey('\x7f', key({ backspace: true }))).toBe('backspace')
+  })
+
+  it('maps approval decision keys only through the contextual matcher', () => {
+    expect(matchApprovalKey('a', key())).toBe('approve')
+    expect(matchApprovalKey('A', key())).toBe('approve')
+    expect(matchApprovalKey('d', key())).toBe('deny')
+    expect(matchApprovalKey('x', key())).toBe('deny')
+    expect(matchApprovalKey('b', key())).toBeNull()
+    expect(matchApprovalKey('a', key({ ctrl: true }))).toBeNull()
+    // Not in the global table: plain typing must stay text while idle.
+    expect(matchKey('a', key())).toBe('text')
+    expect(matchKey('d', key())).toBe('text')
   })
 
   it('treats plain characters as text and swallows unbound control keys', () => {
@@ -57,6 +70,7 @@ describe('matchKey', () => {
       'toggle-sidebar',
       'new-session',
       'delete-session',
+      'expand-focus',
       'scroll-up',
       'page-up',
     ])

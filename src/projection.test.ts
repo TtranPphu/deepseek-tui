@@ -6,8 +6,13 @@ import {
   applySessionEvent,
   createProjection,
   createStreamProjector,
+  displayToolName,
   echoUser,
+  findToolPart,
+  nextFocusCallId,
   projectEvents,
+  summarizeArgs,
+  turnActivity,
   type AssistantPart,
   type ToolPart,
 } from './projection.js'
@@ -191,6 +196,83 @@ describe('tool steps', () => {
     const turn = p.turns[0]!
     expect(turn.status).toBe('aborted')
     expect((turn.parts[0] as ToolPart).status).toBe('aborted')
+  })
+
+  it('marks an AbortError result as aborted, not error (cancel settles with one)', () => {
+    const p = projectEvents([
+      event('turn/start', { turn: 1 }),
+      event('tool/call', { turn: 1, step: 1, callId: 'c1' as ToolCallId, name: 'bash', arguments: '{"cmd":"sleep"}' }),
+      event('tool/result', {
+        turn: 1,
+        step: 1,
+        message: {
+          id: 'r1' as MessageId,
+          role: 'user',
+          content: [{ type: 'tool-result', toolCallId: 'c1' as ToolCallId, content: [{ type: 'text', text: 'Error: tool call aborted' }], isError: true }],
+          source: { kind: 'tool', callId: 'c1' as ToolCallId },
+        },
+        error: { name: 'AbortError', code: 'ABORTED' },
+      }),
+      event('turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } }),
+    ])
+    const tool = p.turns[0]!.parts[0] as ToolPart
+    expect(tool.status).toBe('aborted')
+    expect(tool.durationMs).toBe(10)
+  })
+})
+
+describe('tool presentation helpers', () => {
+  it('title-cases tool names', () => {
+    expect(displayToolName('bash')).toBe('Bash')
+    expect(displayToolName('fs_read')).toBe('Fs Read')
+    expect(displayToolName('str-replace-editor')).toBe('Str Replace Editor')
+  })
+
+  it('summarizes shell commands, paths, and falls back to truncated JSON', () => {
+    expect(summarizeArgs('{"command":"ls -la","description":"list"}')).toBe('ls -la')
+    expect(summarizeArgs('{"path":"/etc/hosts","offset":0}')).toBe('/etc/hosts')
+    expect(summarizeArgs('{"foo":"bar"}')).toBe('{"foo":"bar"}')
+    expect(summarizeArgs('not json')).toBe('not json')
+    expect(summarizeArgs(`{"command":"${'x'.repeat(200)}"}`)).toHaveLength(80)
+    expect(summarizeArgs('{"command":"a\\nb"}')).toBe('a ⏎ b')
+  })
+
+  it('keeps the raw arguments on the tool part for the expand view', () => {
+    const p = projectEvents([
+      event('turn/start', { turn: 1 }),
+      event('tool/call', { turn: 1, step: 1, callId: 'c1' as ToolCallId, name: 'bash', arguments: '{"command":"ls"}' }),
+    ])
+    expect((p.turns[0]!.parts[0] as ToolPart).args).toBe('{"command":"ls"}')
+    expect(findToolPart(p, 'c1')?.name).toBe('bash')
+    expect(findToolPart(p, 'nope')).toBeNull()
+  })
+
+  it('cycles expand focus newest-first, then back to none', () => {
+    const p = projectEvents([
+      event('turn/start', { turn: 1 }),
+      event('tool/call', { turn: 1, step: 1, callId: 'c1' as ToolCallId, name: 'bash', arguments: '{}' }),
+      event('tool/call', { turn: 1, step: 1, callId: 'c2' as ToolCallId, name: 'bash', arguments: '{}' }),
+      event('turn/end', { turn: 1, reason: { kind: 'completed' } }),
+      event('turn/start', { turn: 2 }),
+      event('tool/call', { turn: 2, step: 1, callId: 'c3' as ToolCallId, name: 'bash', arguments: '{}' }),
+    ])
+    expect(nextFocusCallId(p, null)).toBe('c3')
+    expect(nextFocusCallId(p, 'c3')).toBe('c2')
+    expect(nextFocusCallId(p, 'c2')).toBe('c1')
+    expect(nextFocusCallId(p, 'c1')).toBeNull()
+    expect(nextFocusCallId(p, 'stale')).toBeNull()
+    expect(nextFocusCallId(createProjection(), null)).toBeNull()
+  })
+
+  it('reports the open turn as thinking or tool-running', () => {
+    const p = createProjection()
+    expect(turnActivity(p)).toBeNull()
+    applySessionEvent(p, event('turn/start', { turn: 1 }))
+    expect(turnActivity(p)).toBe('thinking')
+    applySessionEvent(p, event('tool/call', { turn: 1, step: 1, callId: 'c1' as ToolCallId, name: 'bash', arguments: '{}' }))
+    expect(turnActivity(p)).toBe('tool')
+    applySessionEvent(p, event('turn/end', { turn: 1, reason: { kind: 'aborted', reason: { kind: 'user' } } }))
+    expect(turnActivity(p)).toBeNull()
   })
 })
 

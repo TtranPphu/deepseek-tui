@@ -17,7 +17,10 @@ overrides:
   "@deepseek-ai/dsh-llm": file:../deepseek-harness/packages/llm/llm
   "@deepseek-ai/dsh-session": file:../deepseek-harness/packages/core/session
   "@deepseek-ai/dsh-session-persistence": file:../deepseek-harness/packages/session/session-persistence
+  "@deepseek-ai/dsh-scope": file:../deepseek-harness/packages/core/scope
+  "@deepseek-ai/dsh-system-prompt": file:../deepseek-harness/packages/core/system-prompt
   "@deepseek-ai/dsh-timeout": file:../deepseek-harness/packages/util/timeout
   "@deepseek-ai/dsh-typert-protocol": file:../deepseek-harness/packages/typert/protocol
+  "@deepseek-ai/dsh-user-approval": file:../deepseek-harness/packages/interaction/user-approval
   "@deepseek-ai/dsh-util-crypto": file:../deepseek-harness/packages/util/crypto
   "@deepseek-ai/dsh-util-values": file:../deepseek-harness/packages/util/values

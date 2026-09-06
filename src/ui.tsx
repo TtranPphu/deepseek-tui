@@ -5,11 +5,13 @@
 import { Box, Text } from 'ink'
 import type { JSX } from 'react'
 import { theme } from './theme.js'
-import { KEYBINDINGS } from './keys.js'
+import { APPROVAL_HINT, KEYBINDINGS } from './keys.js'
 import { scrollWindow, wrapText } from './scroll.js'
 import { relativeTime, visibleStart } from './sessions.js'
 import type { SidebarEntry } from './sessions.js'
+import { displayToolName, summarizeArgs } from './projection.js'
 import type { Projection, ToolPart, TurnPart, TurnView } from './projection.js'
+import type { ApprovalPrompt } from './approval.js'
 
 export type SessionStatus = 'connecting' | 'idle' | 'running' | 'failed'
 
@@ -24,6 +26,14 @@ export interface RenderLine {
   readonly kind: 'user' | 'assistant' | 'tool' | 'result' | 'error' | 'sys'
   readonly text: string
   readonly spinner?: boolean
+  /** Header tone override: error cross, amber approval marker, accent focus. */
+  readonly tone?: 'error' | 'warn' | 'accent'
+}
+
+/** Transient render focus: the ctrl+e-expanded step and the approval-blocked call. */
+export interface TranscriptView {
+  readonly focusedCallId: string | null
+  readonly approvalCallId: string | null
 }
 
 const RESULT_PREVIEW_LINES = 2
@@ -32,32 +42,56 @@ function formatDuration(ms: number): string {
   return ms < 1000 ? `${String(ms)}ms` : `${(ms / 1000).toFixed(1)}s`
 }
 
-function toolHeader(part: ToolPart, spinner: string): string {
-  const glyph = part.status === 'running'
-    ? spinner
-    : part.status === 'done'
-      ? '✓'
-      : part.status === 'error'
-        ? '✗'
-        : '■'
-  const duration = part.durationMs === undefined ? '' : ` ${formatDuration(part.durationMs)}`
-  return `  ${glyph} ${part.name}${duration}`
+function toolGlyph(part: ToolPart, spinner: string): string {
+  switch (part.status) {
+    case 'running': return spinner
+    case 'done': return '✓'
+    case 'error': return '✗'
+    case 'aborted': return '■'
+  }
 }
 
-function partLines(part: TurnPart, cols: number, spinner: string): RenderLine[] {
-  if (part.kind === 'tool') {
-    const lines: RenderLine[] = [{ kind: 'tool', text: toolHeader(part, spinner), spinner: part.status === 'running' }]
-    if (part.status !== 'running' && part.result !== '') {
-      const resultLines = part.result.split('\n')
-      for (const line of resultLines.slice(0, RESULT_PREVIEW_LINES)) {
-        lines.push({ kind: 'result', text: `    ${line}` })
-      }
-      if (resultLines.length > RESULT_PREVIEW_LINES) {
-        lines.push({ kind: 'result', text: `    … +${String(resultLines.length - RESULT_PREVIEW_LINES)} lines` })
-      }
+/** One tool step as a compact bordered block with a left rail. */
+function toolLines(part: ToolPart, cols: number, spinner: string, view: TranscriptView): RenderLine[] {
+  const focused = view.focusedCallId === part.callId
+  const awaiting = view.approvalCallId === part.callId
+  const duration = part.durationMs === undefined ? '' : ` ${formatDuration(part.durationMs)}`
+  const marker = awaiting ? ' ▲ approval' : ''
+  const header: RenderLine = {
+    kind: 'tool',
+    text: `╭─ ${displayToolName(part.name)} · ${summarizeArgs(part.args)} ${toolGlyph(part, spinner)}${duration}${marker}`,
+    spinner: part.status === 'running',
+    tone: part.status === 'error' ? 'error' : awaiting ? 'warn' : focused ? 'accent' : undefined,
+  }
+  const lines: RenderLine[] = [header]
+  // Running and aborted steps stay header-only: no result exists yet, and an
+  // aborted one carries only the harness's internal abort notice, not output.
+  if (part.status === 'running' || part.status === 'aborted') return lines
+  const railWidth = Math.max(8, cols - 4)
+  if (focused) {
+    for (const argLine of part.args.split('\n')) {
+      for (const wrapped of wrapText(argLine, railWidth)) lines.push({ kind: 'result', text: `│ ${wrapped}` })
     }
+    for (const resultLine of part.result.split('\n')) {
+      for (const wrapped of wrapText(resultLine, railWidth)) lines.push({ kind: 'result', text: `│ ${wrapped}` })
+    }
+    lines.push({ kind: 'result', text: '╰─ ctrl+e collapse' })
     return lines
   }
+  if (part.result !== '') {
+    const resultLines = part.result.split('\n')
+    for (const line of resultLines.slice(0, RESULT_PREVIEW_LINES)) lines.push({ kind: 'result', text: `│ ${line}` })
+    if (resultLines.length > RESULT_PREVIEW_LINES) {
+      lines.push({ kind: 'result', text: `╰─ … +${String(resultLines.length - RESULT_PREVIEW_LINES)} lines · ctrl+e expand` })
+    } else {
+      lines.push({ kind: 'result', text: '╰─' })
+    }
+  }
+  return lines
+}
+
+function partLines(part: TurnPart, cols: number, spinner: string, view: TranscriptView): RenderLine[] {
+  if (part.kind === 'tool') return toolLines(part, cols, spinner, view)
   const out: RenderLine[] = []
   for (const paragraph of part.text.split('\n')) {
     for (const line of wrapText(paragraph, cols)) out.push({ kind: 'assistant', text: line })
@@ -69,7 +103,7 @@ function partLines(part: TurnPart, cols: number, spinner: string): RenderLine[] 
   return out
 }
 
-function turnLines(turn: TurnView, cols: number, spinner: string): RenderLine[] {
+function turnLines(turn: TurnView, cols: number, spinner: string, view: TranscriptView): RenderLine[] {
   const lines: RenderLine[] = []
   if (turn.user !== '') {
     for (const [i, line] of turn.user.split('\n').entries()) {
@@ -77,16 +111,22 @@ function turnLines(turn: TurnView, cols: number, spinner: string): RenderLine[] 
       for (const wrapped of wrapText(prefix + line, cols)) lines.push({ kind: 'user', text: wrapped })
     }
   }
-  for (const part of turn.parts) lines.push(...partLines(part, cols, spinner))
+  for (const part of turn.parts) lines.push(...partLines(part, cols, spinner, view))
   if (turn.status === 'error') lines.push({ kind: 'error', text: `✗ ${turn.error ?? 'turn failed'}` })
   else if (turn.status === 'aborted') lines.push({ kind: 'sys', text: '■ stopped' })
   return lines
 }
 
 /** Flatten the projection into display rows: notices first, then turns in order. */
-export function renderLines(notices: readonly string[], projection: Projection, cols: number, spinner: string): RenderLine[] {
+export function renderLines(
+  notices: readonly string[],
+  projection: Projection,
+  cols: number,
+  spinner: string,
+  view: TranscriptView = { focusedCallId: null, approvalCallId: null },
+): RenderLine[] {
   const lines: RenderLine[] = notices.map((text) => ({ kind: 'sys' as const, text }))
-  for (const turn of projection.turns) lines.push(...turnLines(turn, cols, spinner))
+  for (const turn of projection.turns) lines.push(...turnLines(turn, cols, spinner, view))
   return lines
 }
 
@@ -169,8 +209,16 @@ function LineRow({ line }: { line: RenderLine }): JSX.Element {
       return <Text bold color={theme.colors.user} wrap="truncate-end">{line.text}</Text>
     case 'assistant':
       return <Text wrap="truncate-end">{line.text}</Text>
-    case 'tool':
-      return <Text color={line.spinner ? theme.colors.accent : theme.colors.muted} wrap="truncate-end">{line.text}</Text>
+    case 'tool': {
+      const color = line.tone === 'error'
+        ? theme.colors.error
+        : line.tone === 'warn'
+          ? theme.colors.event
+          : line.spinner || line.tone === 'accent'
+            ? theme.colors.accent
+            : theme.colors.muted
+      return <Text color={color} wrap="truncate-end">{line.text}</Text>
+    }
     case 'result':
       return <Text color={theme.colors.muted} wrap="truncate-end">{line.text}</Text>
     case 'error':
@@ -191,13 +239,43 @@ export function Transcript({ lines, viewport, scroll }: { lines: readonly Render
   )
 }
 
-export function Footer({ status, scroll }: { status: SessionStatus; scroll: number }): JSX.Element {
+/** Fixed height of the approval banner so viewport math stays exact. */
+export const APPROVAL_BANNER_ROWS = 3
+
+/**
+ * The approval prompt region above the composer: the tool and proposed
+ * command, the asker's reason, and the decision keys. Dumb — decisions are
+ * the controller's.
+ */
+export function ApprovalBanner({ prompt, command }: { prompt: ApprovalPrompt; command: string | null }): JSX.Element {
+  const proposed = command === null ? displayToolName(prompt.toolName) : `${displayToolName(prompt.toolName)} · ${command}`
+  return (
+    <Box flexDirection="column" height={APPROVAL_BANNER_ROWS}>
+      <Text bold color={theme.colors.event} wrap="truncate-end">{` ▲ approval required — ${proposed}`}</Text>
+      <Text color={theme.colors.muted} wrap="truncate-end">{`   ${prompt.reason ?? 'the tool asks for permission'}`}</Text>
+      <Text color={theme.colors.muted} wrap="truncate-end">{`   ${APPROVAL_HINT}`}</Text>
+    </Box>
+  )
+}
+
+interface FooterProps {
+  readonly status: SessionStatus
+  readonly scroll: number
+  /** Working state of the open turn; null when idle. */
+  readonly activity: 'thinking' | 'tool' | null
+  readonly awaitingApproval: boolean
+  readonly spinner: string
+}
+
+export function Footer({ status, scroll, activity, awaitingApproval, spinner }: FooterProps): JSX.Element {
   const hints = KEYBINDINGS.filter((binding) => binding.hint).map((binding) => binding.hint).join(' · ')
-  const state = scroll > 0 ? `${status} · ↑${scroll} more` : status
+  const working = awaitingApproval ? 'awaiting approval' : activity === 'tool' ? `${spinner} tool running` : activity === 'thinking' ? `${spinner} working` : status
+  const state = scroll > 0 ? `${working} · ↑${scroll} more` : working
   return (
     <Box justifyContent="space-between" width="100%">
       <Text color={theme.colors.muted} wrap="truncate-end">{hints}</Text>
-      <Text color={theme.colors.muted}>{state}</Text>
+      {/* truncate-end on both halves: a wrapping footer breaks the exact row math of the column above it. */}
+      <Text color={theme.colors.muted} wrap="truncate-end">{state}</Text>
     </Box>
   )
 }

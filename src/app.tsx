@@ -13,14 +13,17 @@ import type { Session, SessionEvent, SessionId } from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-session-title'
 import type { SessionRecord, SessionTitleObservationResult } from '@deepseek-ai/dsh-session-query'
 import type { MessageId, UserMessage } from '@deepseek-ai/dsh-llm'
-import { matchKey } from './keys.js'
+import type { ApprovalOutcome, ApprovalRequestEvent } from '@deepseek-ai/dsh-user-approval/types'
+import { matchApprovalKey, matchKey } from './keys.js'
 import { clampScroll, composerRows, transcriptViewport } from './scroll.js'
-import { applySessionEvent, createProjection, createStreamProjector, echoUser } from './projection.js'
+import { applySessionEvent, createProjection, createStreamProjector, echoUser, findToolPart, nextFocusCallId, summarizeArgs, turnActivity } from './projection.js'
 import type { Projection, StreamProjector } from './projection.js'
+import { createApprovalQueue } from './approval.js'
+import type { ApprovalDecision, ApprovalPrompt } from './approval.js'
 import { confirmationPrompt, isAlreadyDeleted, moveSelection, needsConfirmation, titlesFrom, toSidebarEntries } from './sessions.js'
 import type { PendingAction, SidebarEntry } from './sessions.js'
 import { theme } from './theme.js'
-import { Composer, Footer, Header, SIDEBAR_WIDTH, Sidebar, Transcript, renderLines } from './ui.js'
+import { APPROVAL_BANNER_ROWS, ApprovalBanner, Composer, Footer, Header, SIDEBAR_WIDTH, Sidebar, Transcript, renderLines } from './ui.js'
 import type { SessionInfo, SessionStatus } from './ui.js'
 
 /**
@@ -38,6 +41,8 @@ export interface HarnessServices {
   on(event: 'session/event', listener: (session: Session, event: SessionEvent) => void): () => void
   on(event: 'agent/status', listener: (payload: { agent: Agent; status: AgentStatus }) => void): () => void
   on(event: 'agent/assistant-stream', listener: (payload: { agent: Agent; frame: AssistantStreamFrame }) => void): () => void
+  /** Answer one `approval/request` waterfall ask; `next` delegates foreign agents. */
+  onApproval(listener: (req: ApprovalRequestEvent, next: () => Promise<ApprovalOutcome>) => Promise<ApprovalOutcome>): () => void
 }
 
 type OpenRequest = { readonly kind: 'new' } | { readonly kind: 'resume'; readonly id: SessionId }
@@ -62,6 +67,8 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
   const [sessions, setSessions] = useState<readonly SidebarEntry[]>([])
   const [selectedId, setSelectedId] = useState<SessionId | null>(null)
   const [pending, setPending] = useState<PendingAction | null>(null)
+  const [approvalHead, setApprovalHead] = useState<ApprovalPrompt | null>(null)
+  const [focusedCallId, setFocusedCallId] = useState<string | null>(null)
   // Resize re-render: Ink redraws on its own, but the viewport math reads
   // stdout.rows/columns, so track them as state to guarantee a relayout.
   // `||` catches 0: a degenerate pty (script, CI) reports 0x0 and would
@@ -72,6 +79,10 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
   const sessionDisposersRef = useRef<(() => void)[]>([])
   const projectionRef = useRef<Projection | null>(null)
   const streamRef = useRef<StreamProjector | null>(null)
+  const approvalQueueRef = useRef(createApprovalQueue())
+  // Each queued prompt pairs with the resolver of the promise the answerer
+  // returned to the harness waterfall.
+  const approvalResolversRef = useRef(new Map<ApprovalPrompt, (decision: ApprovalDecision) => void>())
   const onDoneRef = useRef(onDone)
   const servicesRef = useRef(services)
   // The workspace this boot lists and creates sessions for.
@@ -83,6 +94,31 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
   streamRef.current ??= createStreamProjector(projectionRef.current)
   const bump = (): void => setTick((tick) => tick + 1)
   const notify = (text: string): void => setNotices((prev) => [...prev, text])
+
+  // Approval state transitions: the queue in approval.ts owns ordering; these
+  // settle the paired harness promise and republish the head to the renderer.
+  const resolveApproval = (prompt: ApprovalPrompt, decision: ApprovalDecision): void => {
+    const resolve = approvalResolversRef.current.get(prompt)
+    approvalResolversRef.current.delete(prompt)
+    setApprovalHead(approvalQueueRef.current.head)
+    resolve?.(decision)
+  }
+  /** User key decision on the queue head; null pop = late/duplicate, ignored. */
+  const decideApproval = (decision: ApprovalDecision): void => {
+    const prompt = approvalQueueRef.current.decide()
+    if (prompt !== null) resolveApproval(prompt, decision)
+  }
+  /** The harness withdrew a request (its signal aborted): settle cancelled. */
+  const withdrawApproval = (prompt: ApprovalPrompt): void => {
+    if (approvalQueueRef.current.withdraw(prompt)) resolveApproval(prompt, 'cancelled')
+  }
+  /** Session teardown: settle every outstanding ask so no answerer hangs. */
+  const cancelAllApprovals = (): void => {
+    const leftover = approvalQueueRef.current.clear()
+    for (const prompt of leftover) approvalResolversRef.current.get(prompt)?.('cancelled')
+    approvalResolversRef.current.clear()
+    setApprovalHead(null)
+  }
 
   const refreshSessions = async (): Promise<void> => {
     const harness = servicesRef.current
@@ -111,7 +147,9 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
     agentRef.current = null
     projectionRef.current = createProjection()
     streamRef.current = createStreamProjector(projectionRef.current)
+    cancelAllApprovals()
     setPending(null)
+    setFocusedCallId(null)
     setNotices([])
     setScroll(0)
     setSession(null)
@@ -155,6 +193,26 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
         harness.on('agent/status', (payload) => {
           if (payload.agent.id !== agent.session.id) return
           setStatus(payload.status)
+        }),
+        // The TUI is the profile's approval answerer for its own agent;
+        // foreign agents (subagent children) delegate down the waterfall.
+        harness.onApproval((req, next) => {
+          if (req.agent.id !== agent.session.id) return next()
+          return new Promise<ApprovalOutcome>((resolve) => {
+            const prompt: ApprovalPrompt = {
+              toolName: req.toolName,
+              ...req.callId !== undefined ? { callId: req.callId } : {},
+              ...req.reason !== undefined ? { reason: req.reason } : {},
+            }
+            approvalQueueRef.current.request(prompt)
+            approvalResolversRef.current.set(prompt, resolve)
+            setApprovalHead(approvalQueueRef.current.head)
+            // Abort = the harness withdrew the question (turn cancelled,
+            // agent disposed): settle cancelled and drop the banner.
+            req.signal?.addEventListener('abort', () => {
+              withdrawApproval(prompt)
+            }, { once: true })
+          })
         }),
       ]
       setSession({ id: agent.session.id, model: agent.options.model, provider: agent.options.provider, title })
@@ -257,8 +315,19 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
 
   const mainCols = sidebarOpen ? Math.max(20, size.cols - SIDEBAR_WIDTH) : size.cols
   const composerLineCount = composerRows(input, mainCols)
-  const viewport = Math.max(1, transcriptViewport(size.rows, composerLineCount) - (pending === null ? 0 : 1))
-  const lines = renderLines(notices, projectionRef.current, mainCols, SPINNER_FRAMES[spinner] ?? '⠋')
+  const viewport = Math.max(
+    1,
+    transcriptViewport(size.rows, composerLineCount)
+      - (pending === null ? 0 : 1)
+      - (approvalHead === null ? 0 : APPROVAL_BANNER_ROWS),
+  )
+  const spinnerGlyph = SPINNER_FRAMES[spinner] ?? '⠋'
+  const projection = projectionRef.current
+  const approvalTool = approvalHead?.callId !== undefined && projection ? findToolPart(projection, approvalHead.callId) : null
+  const lines = renderLines(notices, projection, mainCols, spinnerGlyph, {
+    focusedCallId,
+    approvalCallId: approvalHead?.callId ?? null,
+  })
 
   // Autoscroll is the default (offset 0 pins to the tail); once the user
   // scrolls up, grow their from-bottom offset with new content so the reading
@@ -273,6 +342,14 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
   }, [lines.length, scroll, viewport])
 
   useInput((ch, key) => {
+    // While an approval pends, its decision keys win over composer text.
+    if (approvalHead !== null) {
+      const decision = matchApprovalKey(ch, key)
+      if (decision !== null) {
+        decideApproval(decision === 'approve' ? 'allowed-once' : 'rejected')
+        return
+      }
+    }
     switch (matchKey(ch, key)) {
       case 'submit': {
         if (pending !== null) {
@@ -289,8 +366,9 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
           }
         }
         const agent = agentRef.current
-        if (status === 'running') {
-          // Submit doubles as stop while a turn runs.
+        // Submit doubles as stop while a turn runs — including one blocked on
+        // an approval, mirroring Esc (the abort settles the ask 'cancelled').
+        if (status === 'running' || approvalHead !== null) {
           agent?.cancel({ kind: 'user' })
           return
         }
@@ -329,8 +407,15 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
           setPending(null)
           return
         }
+        if (focusedCallId !== null) {
+          setFocusedCallId(null)
+          return
+        }
         const agent = agentRef.current
-        if (status === 'running' && agent) {
+        // Esc during an approval cancels the turn: the abort withdraws the
+        // question (harness settles it 'cancelled') and the turn ends
+        // aborted — a deny that never leaves a zombie turn behind.
+        if ((status === 'running' || approvalHead !== null) && agent) {
           agent.cancel({ kind: 'user' })
           return
         }
@@ -344,6 +429,12 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
       case 'quit':
         exit()
         return
+      case 'expand-focus': {
+        const projection = projectionRef.current
+        if (!projection) return
+        setFocusedCallId((prev) => nextFocusCallId(projection, prev))
+        return
+      }
       case 'toggle-sidebar': {
         const next = !sidebarOpen
         setSidebarOpen(next)
@@ -404,10 +495,19 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
       <Box flexDirection="column" width={mainCols}>
         <Header session={session} cols={mainCols} />
         <Transcript lines={lines} viewport={viewport} scroll={scroll} />
+        {approvalHead !== null ? (
+          <ApprovalBanner prompt={approvalHead} command={approvalTool === null ? null : summarizeArgs(approvalTool.args)} />
+        ) : null}
         {pending !== null ? (
           <Text color={theme.colors.error} wrap="truncate-end">{` ${confirmationPrompt(pending)}`}</Text>
         ) : null}
-        <Footer status={status} scroll={scroll} />
+        <Footer
+          status={status}
+          scroll={scroll}
+          activity={projection ? turnActivity(projection) : null}
+          awaitingApproval={approvalHead !== null}
+          spinner={spinnerGlyph}
+        />
         <Composer input={input} busy={status === 'running'} />
       </Box>
     </Box>

@@ -18,6 +18,8 @@ export interface ToolPart {
   readonly kind: 'tool'
   readonly callId: string
   readonly name: string
+  /** Raw JSON arguments from `tool/call`; the expand view and summary read this. */
+  readonly args: string
   status: 'running' | 'done' | 'error' | 'aborted'
   result: string
   readonly startedAt: number
@@ -158,6 +160,7 @@ export function applySessionEvent(projection: Projection, event: SessionEvent): 
         kind: 'tool',
         callId: event.data.callId,
         name: event.data.name,
+        args: event.data.arguments,
         status: 'running',
         result: '',
         startedAt: event.time,
@@ -171,7 +174,14 @@ export function applySessionEvent(projection: Projection, event: SessionEvent): 
         const parts = projection.turns[i]?.parts ?? []
         const part = parts.find((p): p is ToolPart => p.kind === 'tool' && p.callId === callId && p.status === 'running')
         if (part) {
-          part.status = block.isError === true || event.data.error ? 'error' : 'done'
+          // A cancelled call settles with an AbortError result (codes
+          // 'ABORTED'/'ABORTED_BEFORE_DISPATCH'): the user stopped it, so the
+          // step reads as aborted, never as a failure.
+          part.status = event.data.error?.name === 'AbortError'
+            ? 'aborted'
+            : block.isError === true || event.data.error
+              ? 'error'
+              : 'done'
           part.result = blocksToText(block.content)
           part.durationMs = event.time - part.startedAt
           return
@@ -248,4 +258,89 @@ export function projectEvents(events: readonly SessionEvent[]): Projection {
   const projection = createProjection()
   for (const event of events) applySessionEvent(projection, event)
   return projection
+}
+
+/** Tool name in the header's title case: `bash` → `Bash`, `fs_read` → `Fs Read`. */
+export function displayToolName(name: string): string {
+  return name
+    .split(/[_-]/)
+    .map((word) => (word === '' ? word : word[0]!.toUpperCase() + word.slice(1)))
+    .join(' ')
+}
+
+function truncate(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`
+}
+
+/**
+ * Terse one-line summary of a tool call's JSON arguments, in opencode's
+ * style: shell tools show the command, path-taking tools show the path, and
+ * everything else shows the raw arguments truncated.
+ * @param argsJson - the `tool/call` arguments string.
+ * @param max - maximum summary length.
+ * @returns a single-line summary (no newlines).
+ */
+export function summarizeArgs(argsJson: string, max = 80): string {
+  let args: unknown
+  try {
+    args = JSON.parse(argsJson)
+  } catch {
+    return truncate(argsJson.replaceAll('\n', ' '), max)
+  }
+  if (typeof args !== 'object' || args === null) return truncate(argsJson, max)
+  const record = args as Record<string, unknown>
+  for (const field of ['command', 'cmd']) {
+    const value = record[field]
+    if (typeof value === 'string') return truncate(value.replaceAll('\n', ' ⏎ '), max)
+  }
+  for (const field of ['path', 'file_path', 'filePath', 'file']) {
+    const value = record[field]
+    if (typeof value === 'string') return truncate(value, max)
+  }
+  return truncate(argsJson.replaceAll('\n', ' '), max)
+}
+
+/** Every tool callId in display order (turn order, then part order). */
+export function toolCallIds(projection: Projection): string[] {
+  const ids: string[] = []
+  for (const turn of projection.turns) {
+    for (const part of turn.parts) {
+      if (part.kind === 'tool') ids.push(part.callId)
+    }
+  }
+  return ids
+}
+
+/**
+ * The expand/collapse focus cycle: from no focus to the newest tool step,
+ * then step by step toward the oldest, then back to none. A focused callId
+ * that left the projection (session switch) restarts the cycle.
+ */
+export function nextFocusCallId(projection: Projection, current: string | null): string | null {
+  const ids = toolCallIds(projection)
+  if (ids.length === 0) return null
+  if (current === null) return ids[ids.length - 1]!
+  const index = ids.indexOf(current)
+  if (index <= 0) return null
+  return ids[index - 1]!
+}
+
+/** Find a tool part by callId (approval banner looks up the proposed call). */
+export function findToolPart(projection: Projection, callId: string): ToolPart | null {
+  for (let i = projection.turns.length - 1; i >= 0; i--) {
+    const part = projection.turns[i]!.parts.find((p): p is ToolPart => p.kind === 'tool' && p.callId === callId)
+    if (part) return part
+  }
+  return null
+}
+
+/**
+ * The active turn's working state for the footer: `tool` while any tool step
+ * runs, `thinking` while the turn is open with nothing executing, null when
+ * no turn is running.
+ */
+export function turnActivity(projection: Projection): 'thinking' | 'tool' | null {
+  const last = projection.turns[projection.turns.length - 1]
+  if (!last || last.status !== 'running') return null
+  return last.parts.some((part) => part.kind === 'tool' && part.status === 'running') ? 'tool' : 'thinking'
 }
