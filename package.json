@@ -11,6 +11,10 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
+    "./startup": {
+      "types": "./lib/startup.d.ts",
+      "default": "./lib/startup.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -39,6 +43,7 @@
     "@deepseek-ai/cordis": "file:../deepseek-harness/vendor/cordis",
     "@deepseek-ai/dsh-agent": "file:../deepseek-harness/packages/core/agent",
     "@deepseek-ai/dsh-agent-default-model": "file:../deepseek-harness/packages/core/agent-default-model",
+    "@deepseek-ai/dsh-cmdline": "file:../deepseek-harness/packages/boot/cmdline",
     "@deepseek-ai/dsh-commands": "file:../deepseek-harness/packages/interaction/commands",
     "@deepseek-ai/dsh-llm": "file:../deepseek-harness/packages/llm/llm",
     "@deepseek-ai/dsh-session": "file:../deepseek-harness/packages/core/session",

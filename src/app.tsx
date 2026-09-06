@@ -28,6 +28,7 @@ import { createApprovalQueue } from './approval.js'
 import type { ApprovalDecision, ApprovalPrompt } from './approval.js'
 import { confirmationPrompt, isAlreadyDeleted, moveSelection, needsConfirmation, titlesFrom, toSidebarEntries } from './sessions.js'
 import type { PendingAction, SidebarEntry } from './sessions.js'
+import type { TuiStartupService } from './startup.js'
 import { theme } from './theme.js'
 import { APPROVAL_BANNER_ROWS, ApprovalBanner, Composer, CommandPalette, Footer, Header, HELP_CHROME_ROWS, HelpOverlay, PALETTE_MAX_ROWS, SIDEBAR_WIDTH, Sidebar, Transcript, renderLines } from './ui.js'
 import type { Notice, SessionInfo, SessionStatus } from './ui.js'
@@ -44,6 +45,12 @@ export interface HarnessServices {
   list(): Promise<readonly SessionRecord[]>
   readTitles(ids: readonly SessionId[]): Promise<readonly SessionTitleObservationResult[]>
   deleteSession(id: SessionId): Promise<void>
+  /**
+   * Loud refusal reason when the run's flag-seeded model selection cannot
+   * serve (unknown model or provider); null means proceed. Only flag-seeded
+   * selections are checked — composed defaults are the harness's own.
+   */
+  checkModelSelection(): Promise<string | null>
   listCommands(agent: Agent): readonly CommandDescriptor[]
   executeCommand(agent: Agent, line: string, signal: AbortSignal): Promise<CommandExecution | undefined>
   on(event: 'session/event', listener: (session: Session, event: SessionEvent) => void): () => void
@@ -55,13 +62,21 @@ export interface HarnessServices {
 
 type OpenRequest = { readonly kind: 'new' } | { readonly kind: 'resume'; readonly id: SessionId }
 
+/** What one openSession attempt settled to; 'rejected' is the flag-gate refusal. */
+type OpenOutcome =
+  | { readonly kind: 'opened' }
+  | { readonly kind: 'rejected'; readonly reason: string }
+  | { readonly kind: 'failed'; readonly reason: string }
+  /** A newer open or unmount superseded this attempt; its result is moot. */
+  | { readonly kind: 'stale' }
+
 const SPINNER_FRAMES = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
 }
 
-export function App({ services, onDone }: { services: HarnessServices; onDone: () => void }): JSX.Element {
+export function App({ services, startup, onDone }: { services: HarnessServices; startup: TuiStartupService; onDone: () => void }): JSX.Element {
   const { exit } = useApp()
   const { stdout } = useStdout()
   const [notices, setNotices] = useState<Notice[]>([])
@@ -105,6 +120,7 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
   const approvalResolversRef = useRef(new Map<ApprovalPrompt, (decision: ApprovalDecision) => void>())
   const onDoneRef = useRef(onDone)
   const servicesRef = useRef(services)
+  const startupRef = useRef(startup)
   // The workspace this boot lists and creates sessions for.
   const workspaceRef = useRef(process.cwd())
   // Stale-open guard: a slow create/resume loses to any newer request or to unmount.
@@ -280,9 +296,20 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
     }
   }
 
-  const openSession = async (request: OpenRequest): Promise<void> => {
-    const generation = ++openGenerationRef.current
+  /**
+   * Open (create or resume) one session and attach its event subscriptions.
+   * The model gate runs BEFORE any teardown, so a refused flag selection
+   * leaves a live session untouched; teardown of the previous session only
+   * starts once the harness call is about to happen. Outcomes report back:
+   * 'opened' after the subscriptions attach, 'rejected' for the gate, and
+   * 'failed' with the harness error when create/resume itself throws (the
+   * previous session is already gone by then — callers decide the next move).
+   */
+  const openSession = async (request: OpenRequest): Promise<OpenOutcome> => {
     const harness = servicesRef.current
+    const gateReason = await harness.checkModelSelection()
+    if (gateReason !== null) return { kind: 'rejected', reason: gateReason }
+    const generation = ++openGenerationRef.current
     for (const dispose of sessionDisposersRef.current.splice(0)) dispose()
     const oldHandle = handleRef.current
     handleRef.current = null
@@ -304,14 +331,14 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
         : await harness.resume(request.id)
       if (generation !== openGenerationRef.current || unmountedRef.current) {
         await handle.dispose()
-        return
+        return { kind: 'stale' }
       }
       const agent = handle.agent
       agentRef.current = agent
       handleRef.current = handle
       const projection = projectionRef.current
       const stream = streamRef.current
-      if (!projection || !stream) return
+      if (!projection || !stream) return { kind: 'stale' }
       // Replay the persisted log through the same fold live events use.
       const events = agent.session.snapshotEvents()
       for (const event of events) applySessionEvent(projection, event)
@@ -357,26 +384,43 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
           })
         }),
       ]
-      setSession({ id: agent.session.id, model: agent.options.model, provider: agent.options.provider, title })
+      setSession({
+        id: agent.session.id,
+        model: agent.options.model,
+        provider: agent.options.provider,
+        title,
+        cwd: agent.session.header.cwd ?? workspaceRef.current,
+      })
       setStatus('idle')
       bump()
       notify(request.kind === 'new' ? `session ${agent.session.id} started` : `session ${agent.session.id} resumed`)
       await refreshSessions()
       setSelectedId(agent.session.id)
+      return { kind: 'opened' }
     } catch (error) {
-      if (generation !== openGenerationRef.current || unmountedRef.current) return
+      if (generation !== openGenerationRef.current || unmountedRef.current) return { kind: 'stale' }
       setStatus('failed')
-      notify(`failed to open session: ${errorMessage(error)}`)
+      return { kind: 'failed', reason: errorMessage(error) }
     }
   }
 
+  /** One failed/rejected open: the loud notice, and a failed status when no session survives. */
+  const reportOpenFailure = (outcome: { readonly kind: 'rejected' | 'failed'; readonly reason: string }): void => {
+    notify(`failed to open session: ${outcome.reason}`, true)
+    if (agentRef.current === null) setStatus('failed')
+  }
+
   const runAction = async (action: PendingAction): Promise<void> => {
+    const runOpen = async (request: OpenRequest): Promise<void> => {
+      const outcome = await openSession(request)
+      if (outcome.kind === 'rejected' || outcome.kind === 'failed') reportOpenFailure(outcome)
+    }
     switch (action.kind) {
       case 'new':
-        await openSession({ kind: 'new' })
+        await runOpen({ kind: 'new' })
         return
       case 'open':
-        await openSession({ kind: 'resume', id: action.id })
+        await runOpen({ kind: 'resume', id: action.id })
         return
       case 'delete': {
         // The active session's agent handle holds its write claim, and
@@ -384,7 +428,7 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
         // the open teardown disposes the handle before the delete.
         if (agentRef.current?.session.id === action.id) {
           const next = sessions.find((entry) => entry.id !== action.id)
-          await openSession(next === undefined ? { kind: 'new' } : { kind: 'resume', id: next.id })
+          await runOpen(next === undefined ? { kind: 'new' } : { kind: 'resume', id: next.id })
         }
         try {
           await servicesRef.current.deleteSession(action.id)
@@ -430,9 +474,33 @@ export function App({ services, onDone }: { services: HarnessServices; onDone: (
     }
   }, [stdout])
 
+  // Boot opens what the invocation asked for: `--resume <id>` when given, a
+  // fresh session otherwise. A refused model gate stays loud with no session;
+  // a failed resume (missing/invalid id) falls back to a fresh session so the
+  // boot is never a dead end. Later opens come from key actions.
   useEffect(() => {
-    void openSession({ kind: 'new' })
-    // Boot opens exactly one session; later opens come from key actions.
+    const boot = async (): Promise<void> => {
+      const initial = startupRef.current
+      if (initial.resume === undefined) {
+        const outcome = await openSession({ kind: 'new' })
+        if (outcome.kind === 'rejected' || outcome.kind === 'failed') reportOpenFailure(outcome)
+        return
+      }
+      const resumed = await openSession({ kind: 'resume', id: initial.resume })
+      if (resumed.kind === 'opened' || resumed.kind === 'stale') return
+      if (resumed.kind === 'rejected') {
+        reportOpenFailure(resumed)
+        return
+      }
+      const fresh = await openSession({ kind: 'new' })
+      if (fresh.kind === 'rejected' || fresh.kind === 'failed') {
+        reportOpenFailure(fresh)
+        return
+      }
+      if (fresh.kind === 'stale') return
+      notify(`session ${initial.resume} could not be resumed (${resumed.reason}) — started a fresh session`, true)
+    }
+    void boot()
   }, [])
 
   useEffect(() => {

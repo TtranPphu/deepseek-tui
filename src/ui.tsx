@@ -22,6 +22,8 @@ export interface SessionInfo {
   readonly model?: string | undefined
   readonly provider?: string | undefined
   readonly title?: string | undefined
+  /** Durable session workspace; the live session's own cwd wins over this boot's. */
+  readonly cwd?: string | undefined
 }
 
 export interface RenderLine {
@@ -144,16 +146,112 @@ export function renderLines(
   return lines
 }
 
+/**
+ * Brand-header projection: the parts of the header line for one session,
+ * with the fit policy applied. Widths are exact — each part is plain text of
+ * known display width and the sum with separators is `width` (≤ `cols`).
+ * The header only ever carries model/provider/session/title/cwd facts, never
+ * transient state, so a running turn redraws it to the same parts.
+ */
+export interface HeaderPart {
+  readonly kind: 'brand' | 'identity' | 'model' | 'cwd'
+  readonly text: string
+}
+
+export const HEADER_BRAND = '◆ deepseek-tui'
+const HEADER_SEP = ' · '
+const ELLIPSIS = '…'
+
+/** Truncate from the end, keeping the width budget and leaving room for the ellipsis. */
+function clip(text: string, budget: number): string {
+  if (text.length <= budget) return text
+  if (budget <= 1) return ELLIPSIS.slice(0, budget)
+  return `${text.slice(0, budget - 1)}${ELLIPSIS}`
+}
+
+/** Shorten a path from the left so its tail (the workspace name) stays readable. */
+function clipPath(path: string, budget: number): string {
+  if (path.length <= budget) return path
+  if (budget <= 1) return ELLIPSIS.slice(0, budget)
+  return `${ELLIPSIS}${path.slice(-(budget - 1))}`
+}
+
+export function projectHeader(source: SessionInfo | null, cols: number): { readonly parts: readonly HeaderPart[]; readonly width: number } {
+  const join = (parts: readonly HeaderPart[]): { readonly parts: HeaderPart[]; readonly width: number } => {
+    const present = parts.filter((part) => part.text.length > 0)
+    const width = present.length === 0
+      ? 0
+      : present.reduce((sum, part) => sum + part.text.length, 0) + HEADER_SEP.length * (present.length - 1)
+    return { parts: present, width }
+  }
+  const brand: HeaderPart = { kind: 'brand', text: HEADER_BRAND }
+  const identity: HeaderPart = {
+    kind: 'identity',
+    text: source === null ? 'connecting…' : source.title ?? `session ${source.id.slice(0, 8)}`,
+  }
+  const model: HeaderPart | undefined = source === null || source.model === undefined
+    ? undefined
+    : { kind: 'model', text: source.provider === undefined ? source.model : `${source.model} · ${source.provider}` }
+  const cwd: HeaderPart | undefined = source?.cwd === undefined ? undefined : { kind: 'cwd', text: source.cwd }
+  // Parts have an order of expendability: the cwd is a nicety, the dimmed
+  // model line is secondary, and the session identity only gives up its tail.
+  const withModel = join([brand, identity, ...(model === undefined ? [] : [model])])
+  const line = (parts: readonly HeaderPart[]): { readonly parts: HeaderPart[]; readonly width: number } => join(parts)
+  if (cols >= withModel.width) {
+    if (cwd === undefined) return withModel
+    const full = line([...withModel.parts, cwd])
+    if (cols >= full.width) return full
+    const budget = cols - withModel.width - HEADER_SEP.length
+    const clippedCwd = line([...withModel.parts, { kind: 'cwd', text: clipPath(cwd.text, budget) }])
+    if (cols >= clippedCwd.width) return clippedCwd
+    return withModel
+  }
+  const base = line([brand, identity])
+  // A clipped identity keeps its readable prefix only with a sane budget;
+  // below that the dimmed model line yields first.
+  const identityBudget = cols - (withModel.width - identity.text.length)
+  if (identityBudget >= 8) {
+    const clippedIdentity = line([brand, { kind: 'identity', text: clip(identity.text, identityBudget) }, ...(model === undefined ? [] : [model])])
+    if (cols >= clippedIdentity.width) return clippedIdentity
+  }
+  if (cols >= base.width) return base
+  // Even without the model line a long title still needs its own truncation.
+  const baseBudget = cols - (base.width - identity.text.length)
+  const clippedBase = line([brand, { kind: 'identity', text: clip(identity.text, baseBudget) }])
+  if (cols >= clippedBase.width) return clippedBase
+  return line([{ kind: 'brand', text: clip(brand.text, cols) }])
+}
+
+/** The wordmark bar: brand, session identity, model/provider, and cwd when it fits. */
 export function Header({ session, cols }: { session: SessionInfo | null; cols: number }): JSX.Element {
-  const segments = [
-    'deepseek-tui',
-    session?.model,
-    session?.provider,
-    session ? (session.title ?? `session ${session.id.slice(0, 8)}`) : 'connecting…',
-  ].filter((s): s is string => s !== undefined)
+  const { parts, width } = projectHeader(session, cols)
+  const gap = Math.max(0, cols - width)
   return (
-    <Text backgroundColor={theme.colors.headerBg} color={theme.colors.headerFg} bold wrap="truncate-end">
-      {` ${segments.join(' · ')} `.padEnd(cols)}
+    <Text backgroundColor={theme.colors.headerBg} wrap="truncate-end">
+      {parts.map((part, index) => {
+        const separator = index === 0 ? null : <Text key={`sep-${index}`} color={theme.colors.muted}>{HEADER_SEP}</Text>
+        if (part.kind === 'brand') {
+          // The wordmark's glyph carries the accent; the rest is the bold brand.
+          const glyph = part.text.startsWith('◆') ? '◆' : ''
+          const rest = part.text.slice(glyph.length).replace(/^ /, '')
+          return (
+            <Text key={part.kind}>
+              {separator}
+              <Text color={theme.colors.accent}>{glyph}</Text>
+              {glyph !== '' ? <Text>{' '}</Text> : null}
+              <Text bold color={theme.colors.headerFg}>{rest}</Text>
+            </Text>
+          )
+        }
+        const dim = part.kind === 'model' || part.kind === 'cwd'
+        return (
+          <Text key={part.kind}>
+            {separator}
+            <Text color={dim ? theme.colors.muted : theme.colors.headerFg}>{part.text}</Text>
+          </Text>
+        )
+      })}
+      {gap > 0 ? <Text color={theme.colors.headerFg}>{' '.repeat(gap)}</Text> : null}
     </Text>
   )
 }

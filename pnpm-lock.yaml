@@ -10,6 +10,7 @@ overrides:
   '@deepseek-ai/schemastery': file:../deepseek-harness/vendor/schemastery
   '@deepseek-ai/dsh-agent': file:../deepseek-harness/packages/core/agent
   '@deepseek-ai/dsh-agent-default-model': file:../deepseek-harness/packages/core/agent-default-model
+  '@deepseek-ai/dsh-cmdline': file:../deepseek-harness/packages/boot/cmdline
   '@deepseek-ai/dsh-settings': file:../deepseek-harness/packages/settings/settings
   '@deepseek-ai/dsh-brand': file:../deepseek-harness/packages/util/brand
   '@deepseek-ai/dsh-llm': file:../deepseek-harness/packages/llm/llm
@@ -43,6 +44,9 @@ importers:
       '@deepseek-ai/dsh-agent-default-model':
         specifier: file:../deepseek-harness/packages/core/agent-default-model
         version: file:../deepseek-harness/packages/core/agent-default-model(08b6592f1350bdb5b7ef418c1294ee5e)
+      '@deepseek-ai/dsh-cmdline':
+        specifier: file:../deepseek-harness/packages/boot/cmdline
+        version: file:../deepseek-harness/packages/boot/cmdline(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)
       '@deepseek-ai/dsh-commands':
         specifier: file:../deepseek-harness/packages/interaction/commands
         version: file:../deepseek-harness/packages/interaction/commands(2b0e972f4a91410ed1e2d8619ef80a8e)
@@ -129,6 +133,12 @@ packages:
     resolution: {directory: ../deepseek-harness/packages/util/brand, type: directory}
     peerDependencies:
       '@deepseek-ai/cordis': workspace:^
+
+  '@deepseek-ai/dsh-cmdline@file:../deepseek-harness/packages/boot/cmdline':
+    resolution: {directory: ../deepseek-harness/packages/boot/cmdline, type: directory}
+    peerDependencies:
+      '@deepseek-ai/cordis': workspace:^
+      '@deepseek-ai/cordis-plugin-loader': workspace:^
 
   '@deepseek-ai/dsh-commands@file:../deepseek-harness/packages/interaction/commands':
     resolution: {directory: ../deepseek-harness/packages/interaction/commands, type: directory}
@@ -1025,6 +1035,10 @@ snapshots:
       '@deepseek-ai/dsh-typert-protocol': file:../deepseek-harness/packages/typert/protocol(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)
 
   '@deepseek-ai/dsh-brand@file:../deepseek-harness/packages/util/brand(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)':
+    dependencies:
+      '@deepseek-ai/cordis': file:../deepseek-harness/vendor/cordis
+
+  '@deepseek-ai/dsh-cmdline@file:../deepseek-harness/packages/boot/cmdline(@deepseek-ai/cordis@file:../deepseek-harness/vendor/cordis)':
     dependencies:
       '@deepseek-ai/cordis': file:../deepseek-harness/vendor/cordis
 

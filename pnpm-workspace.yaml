@@ -12,6 +12,7 @@ overrides:
   "@deepseek-ai/schemastery": file:../deepseek-harness/vendor/schemastery
   "@deepseek-ai/dsh-agent": file:../deepseek-harness/packages/core/agent
   "@deepseek-ai/dsh-agent-default-model": file:../deepseek-harness/packages/core/agent-default-model
+  "@deepseek-ai/dsh-cmdline": file:../deepseek-harness/packages/boot/cmdline
   "@deepseek-ai/dsh-settings": file:../deepseek-harness/packages/settings/settings
   "@deepseek-ai/dsh-brand": file:../deepseek-harness/packages/util/brand
   "@deepseek-ai/dsh-llm": file:../deepseek-harness/packages/llm/llm

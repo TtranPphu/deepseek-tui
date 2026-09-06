@@ -5,5 +5,13 @@
 # during development.
 
 - insert:
+    # The app's command-line provider: injects `cmdlineArgs` and provides
+    # `tuiStartup` as an ordinary Cordis service. The app row below injects
+    # that service, so the Loader resolves it only after a clean parse —
+    # `dsh --profile tui --help` and usage errors provide nothing and request
+    # the launcher's exit, so the UI never mounts on a terminal invocation.
+    - id: tui-startup
+      name: 'deepseek-tui/startup'
+
     - id: deepseek-tui
       name: 'deepseek-tui'
